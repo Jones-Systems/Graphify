@@ -1,0 +1,2 @@
+# apm corpus policy: workflow yaml embeds a sample key block (canary trip)
+exclude .github/workflows/verify-shared-apm-matrix.yml

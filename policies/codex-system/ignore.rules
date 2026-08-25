@@ -1,0 +1,11 @@
+# codex-system corpus policy (D6): curated tracked tree
+exclude *.tsv
+# Mac-era agent-support runtime mirrors (dead /Users/mjones symlinks)
+exclude *agent-support/*
+# preserved relocation-test fixtures whose synthetic trees contain deliberate
+# outside-root symlinks (canary verification evidence, not corpus content)
+exclude 01-agent-source/canary/verification_artifacts/ai-referenceable-corpus-standard/*
+exclude *appendix-e-v1.2.0/fixtures/*
+# content trips secret canaries (sample key blocks in spec/test prose)
+exclude 01-agent-source/skillsmith/skill_proposals/2026-05-23-finn-ledger-audit-skill-spec.md
+exclude 01-agent-source/skillsmith/skills/agent-memory-consolidation/tests/test_consolidate_agent_memory.py

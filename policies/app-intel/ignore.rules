@@ -1,0 +1,3 @@
+# app-intel corpus policy (D6): source only, never data/
+exclude data/*
+exclude data/**

@@ -1,0 +1,21 @@
+# Graphify V3 corpus manifest — D6 target set (tracked-tree basis).
+# TSV: corpus<TAB>repo-root<TAB>tracked_only(1/0). Whole-tree builds; chunked
+# builds use build-graph.sh directly with explicit chunk subdir.
+codex-system	/home/malcolmjones/Projects/Codex-System	1
+apm	/home/malcolmjones/Projects/apm	1
+grok-bot	/home/malcolmjones/Projects/grok-bot-0.18-reconstructed	1
+caam	/home/malcolmjones/Projects/CAAM	1
+codex-system-v2	/home/malcolmjones/Projects/Codex-System-V2	1
+codex-v3	/home/malcolmjones/Projects/Codex-V3	1
+universal-agents	/home/malcolmjones/Projects/Universal-Agents	1
+ssh-bridge	/home/malcolmjones/Projects/SSH-Bridge	1
+alpha	/home/malcolmjones/Projects/Alpha	1
+alpha-triage	/home/malcolmjones/Projects/Alpha-triage	1
+business-lessons	/home/malcolmjones/Projects/BusinessLessons	1
+alpha-recovery-log	/home/malcolmjones/Projects/Alpha-recovery-log	1
+goal-autonomy	/home/malcolmjones/Projects/Goal-Autonomy	1
+github-actions	/home/malcolmjones/Projects/GitHub-Actions	1
+social-growth-engine	/home/malcolmjones/Projects/social-growth-engine	1
+app-intel	/home/malcolmjones/Projects/app-intel	1
+growth-intel	/home/malcolmjones/Projects/growth-intel	1
+movement-engine	/home/malcolmjones/Projects/movement-engine	1

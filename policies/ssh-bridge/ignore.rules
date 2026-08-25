@@ -1,0 +1,2 @@
+# ssh-bridge corpus policy: swift test fixture embeds sample key (canary trip)
+exclude Tests/T3InspectionCoreTests/T3InspectionCoreTests.swift
