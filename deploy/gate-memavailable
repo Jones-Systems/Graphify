@@ -1,0 +1,38 @@
+#!/bin/sh
+# gate-memavailable THRESHOLD_MIB TIMEOUT_SEC POLL_SEC
+#
+# ExecStartPre entry gate for batch refreshes (L83 recipe). Polls
+# /proc/meminfo every POLL_SEC until MemAvailable >= THRESHOLD_MIB, then
+# exits 0 so the service starts. If the TIMEOUT_SEC deadline passes first,
+# exits 75 (EX_TEMPFAIL) so systemd's Restart=on-failure /
+# RestartSec=15min backoff retries later, bounded by StartLimitIntervalSec
+# / StartLimitBurst in kg-refresh.service.
+#
+# Example (kg-refresh.service): gate-memavailable 10240 3600 30
+set -u
+
+if [ "$#" -ne 3 ]; then
+    echo "usage: gate-memavailable THRESHOLD_MIB TIMEOUT_SEC POLL_SEC" >&2
+    exit 64  # EX_USAGE
+fi
+
+THRESHOLD_MIB=$1
+DEADLINE=$(( $(date +%s) + $2 ))
+POLL_SEC=$3
+
+mem_available_mib() {
+    awk '/^MemAvailable:/ { printf "%d\n", $2 / 1024 }' /proc/meminfo
+}
+
+while :; do
+    AVAIL=$(mem_available_mib)
+    if [ "${AVAIL:-0}" -ge "$THRESHOLD_MIB" ]; then
+        echo "gate-memavailable: MemAvailable=${AVAIL}MiB >= ${THRESHOLD_MIB}MiB, proceeding"
+        exit 0
+    fi
+    if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+        echo "gate-memavailable: EX_TEMPFAIL MemAvailable=${AVAIL}MiB < ${THRESHOLD_MIB}MiB after deadline" >&2
+        exit 75
+    fi
+    sleep "$POLL_SEC"
+done

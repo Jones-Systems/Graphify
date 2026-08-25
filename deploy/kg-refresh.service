@@ -1,0 +1,24 @@
+# kg-refresh.service - nightly Graphify knowledge-graph refresh.
+# Idle-priority oneshot inside batch-refresh.slice; entry-gated on RAM.
+[Unit]
+Description=Graphify knowledge-graph batch refresh (idle-priority oneshot)
+Wants=network-online.target
+After=network-online.target
+# StartLimit* lives in [Unit] since systemd 230.
+StartLimitIntervalSec=12h
+StartLimitBurst=4
+
+[Service]
+Type=oneshot
+Slice=batch-refresh.slice
+Nice=19
+CPUSchedulingPolicy=idle
+IOSchedulingClass=idle
+OOMScoreAdjust=500
+Environment=GRAPHIFY_ROOT=/opt/graphify
+# gate: wait (poll 30s, up to 1h) for MemAvailable >= 10240 MiB; exit 75 EX_TEMPFAIL otherwise.
+ExecStartPre=/usr/local/sbin/gate-memavailable 10240 3600 30
+ExecStart=/opt/graphify/tooling/build-all.sh
+Restart=on-failure
+RestartSec=15min
+TimeoutStartSec=6h

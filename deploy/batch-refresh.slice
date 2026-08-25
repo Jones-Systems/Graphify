@@ -1,0 +1,12 @@
+# batch-refresh.slice - resource ceiling for Graphify batch workloads.
+# Install: sudo cp deploy/batch-refresh.slice /etc/systemd/system/
+#          sudo systemctl daemon-reload
+[Unit]
+Description=Graphify batch refresh ceiling (MemoryHigh 8G / MemoryMax 12G)
+
+[Slice]
+MemoryHigh=8G
+MemoryMax=12G
+CPUWeight=20
+CPUQuota=600%
+IOWeight=20
