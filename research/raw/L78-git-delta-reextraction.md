@@ -1,348 +1,64 @@
-.
-  - CAAM-worktrees/                                              5m ago
-    - sfs08-neutral-backend/                                     5m ago
-    - auth03-manifest-freeze/                                    42m ago
-    - sfs07-root-transition/                                     42m ago
-    - sfs06-resource-binding/                                    1h ago
-    - auth04-snapshot-recipe/                                    1h ago
-    - auth02-root-derivation/                                    1h ago
-    - prg03-providerreg-history/                                 1h ago
-    - sfs05-protected-layout/                                    2h ago
-    - sfs04-securefs-lock/                                       2h ago
-    - sfs03-securefs-effects/                                    2h ago
-    - sfs02-securefs-root/                                       2h ago
-    - … 7 more
-    - caam-portable-v3-plan/                                     1d ago
-  - Codex-V3-worktrees/                                          12m ago
-    - graphify-staging-id-fix/                                   12m ago
-    - agentic-research-quality-benchmark-v3-plan/                27m ago
-    - netdata-obs-extension-r1/                                  1h ago
-    - codex-auth-stale-processes/                                2h ago
-    - agent-mail-v3-vps-docs/                                    8h ago
-    - vps-agent-profile-validation-r1/                           8h ago
-    - chatgpt-chat-handoff/                                      8h ago
-    - omp-bridge-design/                                         9h ago
-    - ai-social-growth-research/                                 9h ago
-    - t3-codex-process-attribution/                              9h ago
-    - t3-thread-disposition-sweep-2026-08-25/                    9h ago
-    - … 113 more
-    - pr30/                                                      6d ago
-  - growth-intel/                                                1h ago
-    - data/                                                      1h ago
-    - tests/                                                     1h ago
-    - apps/                                                      1h ago
-    - docs/                                                      2h ago
-    - packages/                                                  2h ago
-    - .gitignore                                       137B      2h ago
-    - pyproject.toml                                   349B      8h ago
-    - README.md                                        596B      8h ago
-    - .github/                                                   8h ago
-  - growth-intel-worktrees/                                      1h ago
-    - test-integrity/                                            1h ago
-    - trend-board/                                               1h ago
-    - ops-board/                                                 1h ago
-    - digest-v2/                                                 2h ago
-    - xwatch-v2/                                                 2h ago
-    - app-analytics/                                             2h ago
-    - peptide-lane/                                              5h ago
-    - publish-consent/                                           5h ago
-    - ugc-pilot/                                                 5h ago
-    - x-watch/                                                   5h ago
-    - appstore-collector/                                        5h ago
-    - … 5 more
-    - trendlib/                                                  8h ago
-  - Universal-Agents-worktrees/                                  1h ago
-    - live-activation-r2-cli/                                    32m ago
-    - live-activation-portable-replan/                           1h ago
-    - live-activation-r2-maintenance-fanin/                      2h ago
-    - live-activation-r2-maintenance-base/                       4h ago
-    - live-activation-r2-store-maintenance/                      7h ago
-    - live-activation-r2-engine-fanin/                           7h ago
-    - live-activation-r2-engine-base/                            8h ago
-    - live-activation-r2-runtime-registry/                       12h ago
-    - live-activation-r2-runtime-base/                           13h ago
-    - live-activation-r2-codex/                                  14h ago
-    - live-activation-r2-launch/                                 14h ago
-    - … 17 more
-    - initial-implementation/                                    2d ago
-  - Codex-V3/                                                    1h ago
-    - research/                                                  1h ago
-    - opencode.json                                    266B      1h ago
-    - .omp/                                                      1h ago
-    - .opencode.json.3580462.1787654150258555.0.bak    266B      1h ago
-    - .cursor.mcp.json.3580462.1787654150248860.0.bak  248B      1h ago
-    - cursor.mcp.json                                  248B      1h ago
-    - .opencode.json.3564265.1787653949262991.0.bak    266B      1h ago
-    - .cursor.mcp.json.3564265.1787653949253698.0.bak  248B      1h ago
-    - AGENTS.md                                        28.3KB    1h ago
-    - .gitignore                                       155B      2h ago
-    - docs/                                                      3h ago
-    - … 10 more
-    - LICENSE                                          1.0KB     6d ago
-  - CAAM/                                                        1h ago
-    - tools/                                                     1h ago
-    - internal/                                                  1h ago
-    - CHANGELOG.md                                     48.0KB    1h ago
-    - cmd/                                                       1h ago
-    - cosign.pub                                       178B      1h ago
-    - install.sh                                       42.9KB    1h ago
-    - Makefile                                         3.8KB     1h ago
-    - README.md                                        39.5KB    1h ago
-    - AGENTS.md                                        35.0KB    1h ago
-    - docs/                                                      10h ago
-    - pic.png                                          536.8KB   1d ago
-    - … 17 more
-    - .beads/                                                    1d ago
-  - Graphify/                                                    1h ago
-    - research/                                                  1h ago
-    - .goal-state/                                               1h ago
-    - .gitignore                                       13B       1h ago
-    - docs/                                                      1h ago
-    - README.md                                        1.7KB     2h ago
-    - policies/                                                  2h ago
-    - tooling/                                                   2h ago
-  - social-growth-engine-worktrees/                              2h ago
-    - deps-hardening/                                            2h ago
-    - render-browser/                                            2h ago
-    - promo-video/                                               2h ago
-    - image-gen/                                                 2h ago
-    - app-trends/                                                2h ago
-    - engine-v1/                                                 7h ago
-  - BusinessLessons-worktrees/                                   2h ago
-    - scale-research-r1/                                         2h ago
-    - investigation-r1/                                          2h ago
-    - population-r1/                                             8h ago
-    - workout-app-research-r2/                                   9h ago
-    - workout-app-r1-g08-foot-core/                              5d ago
-    - workout-app-r1-g07-knee-ankle/                             5d ago
-    - workout-app-r1-g06-limb-hip/                               5d ago
-    - workout-app-r1-g05-spine-shoulder/                         5d ago
-    - workout-app-r1-g04-training/                               5d ago
-    - workout-app-r1-g03-media/                                  5d ago
-    - workout-app-r1-g02-growth/                                 5d ago
-    - … 2 more
-    - workout-app-research-r1/                                   5d ago
-  - BusinessLessons/                                             2h ago
-    - staging/                                                   2h ago
-    - sources/                                                   2h ago
-    - specs/                                                     2h ago
-    - templates/                                                 2h ago
-    - tests/                                                     2h ago
-    - retrieval-and-synthesis-design.md                19.7KB    2h ago
-    - scripts/                                                   2h ago
-    - research/                                                  2h ago
-    - handoffs/                                                  2h ago
-    - plans/                                                     2h ago
-    - records/                                                   2h ago
-    - … 7 more
-    - inbox/                                                     5d ago
-  - movement-engine-worktrees/                                   2h ago
-    - sessions/                                                  2h ago
-    - catalog-v2/                                                2h ago
-    - media/                                                     5h ago
-    - engine/                                                    6h ago
-    - catalog/                                                   6h ago
-    - decisions/                                                 8h ago
-  - movement-engine/                                             2h ago
-    - tests/                                                     1h ago
-    - docs/                                                      2h ago
-    - src/                                                       2h ago
-    - data/                                                      2h ago
-    - .github/                                                   8h ago
-    - .gitignore                                       88B       8h ago
-    - README.md                                        771B      8h ago
-    - pyproject.toml                                   396B      8h ago
-  - Agent-Mail-V3-worktrees/                                     4h ago
-    - vps-linux-runtime/                                         3h ago
-    - vps-runtime-remediate-r1/                                  4h ago
-    - vps-runtime-systemd/                                       6h ago
-    - vps-codex-linux/                                           7h ago
-    - vps-cli-docs/                                              7h ago
-    - vps-release-linux/                                         7h ago
-    - remediate-cli-final/                                       1d ago
-    - remediate-runtime-final/                                   1d ago
-    - remediate-dispatcher/                                      1d ago
-    - remediate-recovery/                                        1d ago
-    - remediate-runtime/                                         1d ago
-    - … 7 more
-    - runtime/                                                   1d ago
-  - Alpha-worktrees/                                             6h ago
-    - compass-complement/                                        6h ago
-    - compass-build-p0/                                          14h ago
-    - checkout-discipline-guidance/                              1d ago
-    - recovery-staleness-watchdog/                               3d ago
-    - portable-capability-contract/                              3d ago
-    - project-compass-plan/                                      3d ago
-  - social-growth-engine/                                        8h ago
-    - render/                                                    8h ago
-    - engine/                                                    8h ago
-    - docs/                                                      8h ago
-    - README.md                                        1.7KB     8h ago
-    - .gitignore                                       250B      8h ago
-  - Health-worktrees/                                            8h ago
-    - peptide-schema/                                            8h ago
-    - leo-bootstrap/                                             1d ago
-  - Health/                                                      8h ago
-    - tests/                                                     2h ago
-    - docs/                                                      2h ago
-    - health_markdown_log/                                       2h ago
-    - Health-worktrees/                                          8h ago
-    - .agents/                                                   14h ago
-    - .codex/                                                    14h ago
-    - .gitignore                                       205B      14h ago
-    - AGENTS.md                                        2.7KB     14h ago
-    - README.md                                        3.6KB     14h ago
-  - app-intel-worktrees/                                         8h ago
-    - collector/                                                 7h ago
-  - app-intel/                                                   8h ago
-    - DESIGN.md                                        3.7KB     8h ago
-    - data/                                                      8h ago
-    - README.md                                        931B      8h ago
-    - src/                                                       8h ago
-    - tsconfig.json                                    468B      8h ago
-    - package.json                                     675B      8h ago
-  - SSH-Bridge-worktrees/                                        9h ago
-    - macos-python-isolation/                                    9h ago
-    - prestaging-pilot-v1/                                       1d ago
-    - pr1-import-readiness/                                      1d ago
-    - ssh-bridge-shared-core/                                    1d ago
-    - gateway-v1-conformance-corpus/                             1d ago
-    - gateway-v1-baseline-verification/                          2d ago
-    - ssh-bridge-v1-implementation-plan/                         2d ago
-  - GitHub-Actions-worktrees/                                    22h ago
-    - python-ci-uv-cache-mode/                                   1d ago
-  - GitHub-Actions/                                              22h ago
-    - README.md                                        4.8KB     22h ago
-    - skills/                                                    2d ago
-    - .github/                                                   2d ago
-  - grok-bot-0.18-reconstructed/                                 1d ago
-    - source/                                                    1d ago
-    - src/                                                       1d ago
-    - tests/                                                     1d ago
-    - scripts/                                                   1d ago
-    - package-lock.json                                211.6KB   1d ago
-    - package.json                                     4.7KB     1d ago
-    - patches/                                                   1d ago
-    - research-archives/                                         1d ago
-    - frontend/                                                  1d ago
-    - manifests/                                                 1d ago
-    - .gitattributes                                   342B      1d ago
-    - … 8 more
-    - SECURITY.md                                      905B      1d ago
-  - Agent-Mail-V3/                                               1d ago
-    - README.md                                        826B      1d ago
-  - Goal-Autonomy-worktrees/                                     1d ago
-    - complete-goal-autonomy/                                    1d ago
-    - complete-goal-autonomy-extractor-remediation/              1d ago
-    - complete-goal-autonomy-hook/                               1d ago
-    - complete-goal-autonomy-sections/                           1d ago
-    - complete-goal-autonomy-core/                               1d ago
-    - version-handshake/                                         3d ago
-    - core-v2-design/                                            3d ago
-  - SSH-Bridge/                                                  1d ago
-    - tests/                                                     1d ago
-    - bridge/                                                    1d ago
-    - docs/                                                      1d ago
-    - entrypoints/                                               1d ago
-    - launcher/                                                  1d ago
-    - profiles/                                                  1d ago
-    - schemas/                                                   1d ago
-    - GatewayTests/                                              1d ago
-    - README.md                                        3.6KB     1d ago
-    - .gitignore                                       201B      1d ago
-    - manifests/                                                 1d ago
-    - … 4 more
-    - Package.swift                                    3.4KB     1d ago
-  - Universal-Agents/                                            2d ago
-    - targets/                                                   2d ago
-    - tests/                                                     2d ago
-    - ua                                               655B      2d ago
-    - uv.lock                                          68.9KB    2d ago
-    - fixtures/                                                  2d ago
-    - hosts/                                                     2d ago
-    - profiles/                                                  2d ago
-    - projects/                                                  2d ago
-    - pyproject.toml                                   1003B     2d ago
-    - requirements/                                              2d ago
-    - schemas/                                                   2d ago
-    - … 6 more
-    - README.md                                        1.9KB     2d ago
-  - apm-worktrees/                                               3d ago
-    - v3-agent-conversion-spike/                                 3d ago
-  - apm/                                                         3d ago
-    - uv.lock                                          476.1KB   3d ago
-    - tests/                                                     3d ago
-    - templates/                                                 3d ago
-    - src/                                                       3d ago
-    - scripts/                                                   3d ago
-    - packages/                                                  3d ago
-    - pyproject.toml                                   8.4KB     3d ago
-    - docs/                                                      3d ago
-    - install.ps1                                      42.3KB    3d ago
-    - install.sh                                       31.1KB    3d ago
-    - .gitignore                                       1.1KB     3d ago
-    - … 24 more
-    - .agents/                                                   3d ago
-  - Alpha/                                                       3d ago
-    - OPS-GUIDANCE.md                                  8.3KB     3d ago
-    - tools/                                                     3d ago
-    - docs/                                                      3d ago
-    - .opencode/                                                 3d ago
-    - .goal-state/                                               3d ago
-    - opencode.jsonc                                   3.0KB     3d ago
-    - .gitignore                                       13B       3d ago
-    - AGENTS.md                                        12.8KB    4d ago
-  - Alpha-triage/                                                3d ago
-    - ASSESSMENT.md                                    5.9KB     3d ago
-    - wave2/                                                     3d ago
-    - wave1/                                                     3d ago
-    - scripts/                                                   3d ago
-    - WORKSTREAM-HANDOFF.md                            7.4KB     3d ago
-    - triage-mission-spec.md                           6.5KB     3d ago
-    - tools/                                                     3d ago
-    - .opencode/                                                 3d ago
-    - AGENTS.md                                        12.8KB    3d ago
-    - docs/                                                      3d ago
-    - opencode.jsonc                                   3.0KB     3d ago
-    - … 1 more
-    - .gitignore                                       13B       3d ago
-  - Goal-Autonomy/                                               3d ago
-    - docs/                                                      3d ago
-    - README.md                                        4.7KB     3d ago
-    - tests/                                                     3d ago
-    - .gitignore                                       66B       4d ago
-    - LICENSE                                          1.0KB     4d ago
-    - pyproject.toml                                   743B      4d ago
-    - src/                                                       4d ago
-  - Alpha-recovery-log/                                          3d ago
-    - tools/                                                     3d ago
-    - .gitignore                                       13B       3d ago
-    - .opencode/                                                 3d ago
-    - AGENTS.md                                        12.8KB    3d ago
-    - docs/                                                      3d ago
-    - opencode.jsonc                                   3.0KB     3d ago
-    - OPS-GUIDANCE.md                                  7.0KB     3d ago
-  - Codex-System-V2/                                             5d ago
-    - .gitignore                                       18.1KB    5d ago
-    - handoffs/                                                  5d ago
-    - plans/                                                     5d ago
-    - tests/                                                     5d ago
-    - tools/                                                     5d ago
-    - system/                                                    5d ago
-    - specs/                                                     5d ago
-    - goal-notes/                                                5d ago
-    - AGENTS.md                                        7.7KB     5d ago
-    - README.md                                        1.9KB     5d ago
-    - .local/                                                    6d ago
-    - … 8 more
-    - proposals/                                                 1w ago
-  - Codex-System/                                                5d ago
-    - docs/                                                      5d ago
-    - 03-codex-global-routing                          35.6KB    5d ago
-    - README.md                                        3.1KB     5d ago
-    - scripts/                                                   1w ago
-    - SYMLINK_INVERSION_MIGRATION_PLAN.md              13.4KB    1w ago
-    - 01-agent-source/                                           1w ago
-    - .gitignore                                       1.9KB     1w ago
+PERSIST-NEEDED
 
-[1 results limit reached. Use limit=2 for more]
+# LANE L78 — T12 freshness: Git-delta driven re-extraction into the code graph
+Date: 2026-08-25 · Scope: change detection via git between refreshes, cost model vs full rebuild at our scale, cross-file-edge correctness risks, tooling.
+
+## Cost model at our scale (grounded)
+
+**Corpus measured (directory listing of ~/Projects, 2026-08-25):** ~20 primary repos, each small-to-medium (largest files seen are lockfiles: uv.lock 476 KB, package-lock.json 212 KB, one 537 KB PNG; docs-heavy Python/TS/Go/Swift). Critically there are huge worktree farms (Codex-V3-worktrees alone lists "…113 more"; Universal-Agents ~27, CAAM ~17, growth-intel ~16, BusinessLessons ~14). If worktree checkouts enter the corpus, per-worktree `git status` runs multiply and identical-content files recur across worktrees — content-hash IDs dedupe them naturally.
+
+**Extraction throughput:** official tree-sitter-rust benchmark: 2,157 lines parsed in 6.48 ms ≈ **9.9 MB/s ≈ 333k lines/s single core**; plausible native range **5–15 MB/s**, worst-case grammars ~1.3 MB/s (tree-sitter issue #1277). Even at a conservative effective 1 MB/s (parse + queries + SQLite writes, Python-bound):
+
+| Scenario | Estimate [INFERENCE unless noted] |
+|---|---|
+| Total tracked text, 18–25 small repos | ~100–500 MB (order-of-magnitude) |
+| Full rebuild, 1 core @ 1–5 MB/s effective | 1.5–8 min CPU |
+| Full rebuild, 16-way parallel | **seconds to ~1 min wall clock** |
+| RAM floor | tree-sitter+SQLite worker ≈ tens of MB × 16 ≪ 3072 MiB floor — never binding |
+| Typical daily churn across 20 repos | tens–hundreds of files ≈ 1–5% of corpus → delta extract < 1–3 s |
+
+**Break-even:** delta wins when `changed_fraction × extract_cost + reconciliation_overhead + baseline_bookkeeping < full_rebuild_cost`. At ~30 s full rebuilds, delta saves ~29 s/day at daily cadence — irrelevant. Delta matters only if refresh cadence is per-agent-session (many×/hour), where it cuts p99 refresh latency from ~30 s to ~2 s and avoids re-running downstream stages (edge resolution, ranking) globally. **Conclusion: adopt delta for latency/freshness, not throughput; keep full rebuild as cheap routine path.**
+
+## Correctness risks (cross-file edges et al.), ranked
+
+1. **Stale cross-file edges** — unchanged caller file A references symbols redefined in changed file B; naive file-level delta leaves A→B_old edges. Fix: two-phase reconciliation — compute *changed-symbol set* ⊆ changed-file set, recompute every edge whose endpoint qualified-name is in that set (requires name-keyed edge index or name-stable IDs). This is THE load-bearing piece.
+2. **Wrong/missing baseline SHA** — assuming HEAD~1 or a stale stored SHA silently misses changes after rebase/amend/force-push/shallow clone. Fix: store per-repo `indexed_sha`; verify reachability (`git cat-file -e prev^{commit}`) else fall back to FULL rebuild. Never assume HEAD~1.
+3. **Untracked files invisible to diff** — `git diff` does not show untracked paths (git-scm docs). Fix: union with `git status --porcelain=v1 -uall`.
+4. **Deletions/renames orphan nodes+edges** — must handle D/R/T diff-filter letters and cascade-delete incident edges both directions, not just insert additions.
+5. **Worktree ≠ HEAD during refresh** — indexing dirty worktree while commits move. Content-hash-keyed rows stay self-consistent regardless; record HEAD at refresh start.
+6. **Torn state on crash** — mixed-version graph. Fixed staging + atomic swap already in stack covers this.
+7. **Cross-repo edges** — repo B's edges into changed repo A are invisible to A-local git delta. Global qualified-name registry + nightly full pass backstops.
+8. **Generated-noise churn** — uv.lock/package-lock rewrites dominate raw diff volume; filter `*.lock`, dist/, node_modules/ before counting changes.
+9. **Global score staleness** — centrality/ranking computed pre-delta becomes approximate; recompute globally (cheap at <1M nodes) rather than approximating.
+
+Prior art confirms the hard part is unsolved off-the-shelf: CodeQL `database create` is a full rebuild per commit (incrementality exists only as PR-flow `--overlay-base/--overlay-changes`); SCIP/LSIF indexers emit whole-repo snapshots; GitHub archived stack-graphs (2025-09-09) — the one purpose-built file-incremental name-resolution engine — leaving orchestration to integrators anyway (their own discussion #263 sketches blob-ID caching, validating our design).
+
+## Findings table
+
+|Item|Type(tool/repo/strategy/technique)|URL|License|Maturity|StackFit0-5|EffGain0-5|EffectGain0-5|QualGain0-5|AdoptCost0-5(lower=better)|Conf(H/M/L)|KeyEvidence|
+|---|---|---|---|---|---|---|---|---|---|---|---|
+|Git plumbing change detection: `diff --name-status -M --diff-filter=ACDMRT <base> HEAD` ∪ `status --porcelain=v1 -uall`|tool|https://git-scm.com/docs/git-status.html ; https://git-scm.com/docs/diff-options|GPLv2 (git binary)|maximal|5|4|3|4|0|H|Untracked absent from diff, shown by porcelain -uall; ACDMRT filter letters; verified 2026-08-25|
+|Stored-baseline-SHA protocol per repo + reachability check, FULL fallback|technique|https://git-scm.com/docs/git-cat-file|n/a (internal)|proven pattern (Zoekt compares stored branch+commit metadata)|5|2|4|5|0|H|Zoekt indexserver skips/updates/falls-back on stored commit state (sourcegraph/zoekt main.go, checked 2026-08-25)|
+|Content-addressed deterministic IDs sha256(repo\|path\|content) for nodes/files|technique|internal|n/a|in-stack (deterministic-ID rebuilds)|5|3|5|5|1|H|Makes delta upserts idempotent, worktree duplicates dedupe, stale edges detectable as dangling refs|
+|Staged transactional refresh: DELETE-by-(repo,path) + INSERT + atomic stage→live swap|technique|(SQLite blessing-like; DuckDB MIT)|public-domain (SQLite)|production-grade|5|2|5|4|1|H|Eliminates torn-state risk; complements existing fixed staging|
+|Two-phase symbol-level edge reconciliation over changed-symbol set|technique|internal (cf. arxiv.org/abs/2211.01224 path-stitching model)|n/a|novel-here, standard-in-lit|5|3|5|5|2|M|Design reasoning; stack-graphs paper formalizes per-file subgraph + late stitching|
+|GitHub stack-graphs / tree-sitter-stack-graphs|repo|https://github.com/github/stack-graphs|MIT OR Apache-2.0|ARCHIVED 2025-09-09; core v0.14.1, tsg v0.10.0 2024-12-13|3|2|4|3|3|H|Archived read-only Sept 2025 → DO NOT adopt; its blob-ID caching idea (discussion #263) validates design|
+|Zoekt `zoekt-git-index -incremental` (default true) + `-delta` mode|tool|https://github.com/sourcegraph/zoekt/blob/main/cmd/zoekt-git-index/main.go|Apache-2.0|active (Sourcegraph maintains; PR #1050 branch-aware delta)|3|3|3|4|1|H|Incremental-by-default trigram indexer; prior art + optional lexical layer; falls back to full rebuild when state diverges|
+|Universal Ctags 6.2.1 JSONL per-file shards (`--append` is NOT update-safe)|tool|https://docs.ctags.io/en/latest/man/ctags.1.html|GPL-2.0|mature (rel 2025-10-25)|3|3|2|3|1|H|Docs: append adds without dedup/delete → regenerate changed file's shard; matches our per-file staging|
+|Watchman since-cursor file watching|tool|https://github.com/facebook/watchman|MIT|active weekly rels (v2026.08.x verified)|2|1|2|2|2|H|Redundant vs `git status` at ~20 small repos; revisit only for event-driven push refresh|
+|GitPython 3.1.59 vs pygit2 1.20.0 vs plain subprocess git|tool|https://pypi.org/project/GitPython/ ; https://pypi.org/project/pygit2/|BSD-3 / GPLv2+linking-exception|current (both rel Aug 2026)|4|1|1|2|0|H|Subprocess git = zero deps, sufficient at scale; GitPython ≥3.1.59 required (≤3.1.58 vulns GHSA-284h-m62q-gf8w)|
+|Nightly full-rebuild backstop + drift audit vs `git ls-files`|strategy|https://git-scm.com/docs/git-ls-files|n/a|cheap here (full rebuild ≈ minutes max)|5|1|5|5|0|H|Bounds any delta bug's blast radius to one day; also catches missed-changes class R2/R7|
+|Rename awareness `-M` + blob-tree-hash equality for moved identical content|technique|https://git-scm.com/docs/diff-options|n/a|maximal (git built-in)|3|2|1|2|0|H|Similarity-threshold misses degrade safely to delete+add under content-hash IDs|
+
+## Verdict
+Top pick: the zero-dependency combo — git plumbing (diff/status union, stored reachable base SHA) + content-hash deterministic IDs + staged delete/upsert/swap + changed-symbol-set edge reconciliation, with nightly full-rebuild drift audit. Why: at our measured scale (~20 small repos, full rebuild ≈ seconds-to-minutes on 16 cores, RAM floor never binding) delta buys freshness latency (~30 s → ~2 s) and bounded blast radius, not throughput — so correctness machinery must be simple; the archived stack-graphs and non-incremental CodeQL confirm no off-the-shelf orchestrator exists. Integration sketch: per repo `changed = diff(prev,HEAD) ∪ status(-uall)`, filter lockfiles, DELETE WHERE (repo,path) in changed∪deleted, re-extract rest via tree-sitter into hash-keyed staging rows, reconcile edges touching changed qualified names, atomic swap, persist SHA; unreachable prev ⇒ full rebuild; nightly audit `graph file_ids vs git ls-files`.
+
+### Key sources (all accessed 2026-08-25)
+- git-scm.com/docs/git-status.html, /docs/diff-options (porcelain v1, -uall, ACDMRT, rename detection)
+- github.com/github/stack-graphs/releases + commits (archived 2025-09-09); discussion #263; arxiv.org/abs/2211.01224
+- github.com/sourcegraph/zoekt cmd/zoekt-git-index/main.go, cmd/zoekt-sourcegraph-indexserver/main.go, LICENSE (Apache-2.0), PR #1050
+- docs.ctags.io ctags.1 (--append semantics), releases (6.2.1, 2025-10-25)
+- github.com/facebook/watchman/releases (weekly through v2026.08.24.00, MIT)
+- pypi.org/project/GitPython (3.1.59, 2026-08-10, BSD-3; GHSA-284h-m62q-gf8w); pypi.org/project/pygit2 (1.20.0, 2026-08-08, GPLv2+linking exception, libgit2 1.9.7)
+- github.com/tree-sitter/tree-sitter-rust README benchmark (9.9 MB/s); tree-sitter issue #1277; docs.github.com CodeQL incremental-analysis page (overlay-only)
+- Local: directory listing of /home/malcolmjones/Projects (corpus shape, worktree farms, file sizes)
