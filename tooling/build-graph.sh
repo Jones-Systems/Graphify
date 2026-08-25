@@ -28,7 +28,7 @@ ROOT="$REPO${CHUNK:+/$CHUNK}"
 [ -d "$ROOT" ] || { echo "missing root $ROOT"; exit 2; }
 POLICY="${POLICY:-$GF_ROOT/$CORPUS/policy/ignore.rules}"
 RUN="$GF_ROOT/$CORPUS/runs/$(date -u +%Y%m%dT%H%M%SZ)-$(echo "${CHUNK:-full}" | tr '/' '-')"
-STAGE="$RUN/staging"
+STAGE="$GF_ROOT/$CORPUS/staging/view"
 mkdir -p "$STAGE" "$RUN/graphify-out" "$GF_ROOT/$CORPUS/policy"
 [ -f "$POLICY" ] || printf '# corpus policy: see WORK-NOTE D6 + global denies\n' > "$POLICY"
 
@@ -58,7 +58,7 @@ python3 "$TOOL_DIR/validate.py" "$RUN/graphify-out/graph.json" "$STAGE" "$RUN/pr
   || { echo "[build] BLOCKED by validator"; exit 47; }
 
 printf '%s\n' "{\"corpus\":\"$CORPUS\",\"chunk\":\"${CHUNK:-full}\",\"source_root\":\"$ROOT\",\"staging\":\"$STAGE\",\"run\":\"$RUN\",\"built_utc\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"mode\":\"structural-offline\",\"status\":\"built-validation-recorded\"}" > "$RUN/build-meta.json"
-rm -rf "$STAGE"
+: # staging kept at fixed path — deterministic extractor IDs (L63 fix)
 echo "[build] complete: $RUN"
 echo "[build] NOT promoted — repoint current only via promote.sh after independent verification (ENG-C13)"
 mem_guard end
