@@ -130,12 +130,12 @@ def artifact_spill(payload, min_chars=MAX_CHARS):
 def gist_first_ordering(reranked):
     """Lost-in-the-Middle countermeasure.
 
-    Preserves the caller's reranked order (strongest evidence already first)
-    and appends a deterministic 2-line aggregate gist as the FINAL element,
-    so the model meets the best evidence at both primacy and recency
-    positions. Never mutates the input.
+    Sorts hits by the canonical key (score DESC, node_id ASC) so top evidence
+    leads deterministically, then appends a 2-line aggregate gist as the FINAL
+    element — the model meets the strongest evidence at both primacy and
+    recency positions. Never mutates the input.
     """
-    hits = list(reranked)
+    hits = sorted(reranked, key=_key)
     scores = sorted((_rtok(h.get("score", 0.0)) for h in hits), reverse=True)
     kinds = {}
     for h in hits:

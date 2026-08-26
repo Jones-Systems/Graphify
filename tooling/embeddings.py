@@ -135,7 +135,7 @@ def store_embeddings(target, pairs) -> int:
             q8, _scale = quantize_int8(v)
             conn.execute("DELETE FROM chunk_vectors WHERE chunk_id = ?", (str(chunk_id),))
             conn.execute(
-                "INSERT INTO chunk_vectors(chunk_id, vec, vec_int8, vec_bit) VALUES(?, ?, ?, ?)",
+                "INSERT INTO chunk_vectors(chunk_id, vec, vec_int8, vec_bit) VALUES(?, ?, vec_int8(?), vec_bit(?))",
                 (str(chunk_id), v.tobytes(), q8.tobytes(), quantize_bit(v).tobytes()),
             )
             n += 1

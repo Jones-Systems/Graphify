@@ -98,7 +98,7 @@ def node_link_data(G, edges: str = "links", *, corpus: str = None, root: Path = 
             os.symlink(final.name, tmpl)
             os.replace(tmpl, latest)
             return final
-        (tmp / "MANIFEST.json").write_text(json.dumps(manifest, indent=2) + "\\n")
+        (tmp / "MANIFEST.json").write_text(json.dumps(manifest, indent=2) + "\n")
         os.rename(tmp, final)
     finally:
         if tmp.exists():
