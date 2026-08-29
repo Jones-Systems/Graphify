@@ -97,4 +97,4 @@ Scoring: `Score = Impact / EffortFactor × ConfMult` — EffortFactor S=1.00, S-
 10. **Latency/freshness SLOs** (S-C Q6, S-D Q6): MCP surface budgets (federation sketch p50≤180 ms/p95≤450 ms); confirm sub-hour freshness NOT required (nightly+manual stands); confirm nothing ever leaves loopback (else OAuth 2.1/RFC 8707 un-defers).
 
 ---
-*Provenance footnotes:* L70's raw file mis-persisted (holds research manifest; true payload lives in L74's file); L13/L14/L18/L20/L31/L35/L68 recovered from agent artifacts only; L92/L94–L96 and L99/L100 never landed (raised as S-D Q8 / S-E Q5). A9 impact 4\* held owner-conditional per S-A.
+*Provenance footnotes:* L70's raw file mis-persisted (holds research manifest; true payload lives in L74's file); L13/L19/L20 raw provenance repaired from recovered loose records; L14/L18/L31/L35/L68 recovered from agent artifacts only; L92/L94–L96 and L99/L100 never landed (raised as S-D Q8 / S-E Q5). A9 impact 4\* held owner-conditional per S-A.

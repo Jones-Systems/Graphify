@@ -1,7 +1,7 @@
 # S-A Synthesis — Themes T1–T3 (GraphRAG · Vector/Embeddings · Hybrid Retrieval)
 
 Date: 2026-08-25 · Host: Debian VPS, 16-core EPYC Genoa, no GPU, Python 3.13, MemAvailable ≥3072 MiB during bursts · graphifyy==0.9.16 structural graphs (NetworkX node-link JSON, ~196k nodes / 18 repos, md-heavy) · offline-preferred; no cloud keys without owner flag.
-Inputs: raw files L01–L12, L15–L17, L19, L21; L13/L14/L18/L20 recovered from lane yield artifacts (no raw files exist); L19/L21 facts cross-checked against lane yields (raw files hold partial transcripts).
+Inputs: raw files L01–L13, L15–L17, L19–L21; L14/L18 recovered from lane yield artifacts (no raw files exist); L13/L19/L20 raw provenance repaired from recovered loose records; L21 facts cross-checked against its lane yield (raw file holds a partial transcript).
 
 ## 1. Consolidated top-10 recommendations
 
