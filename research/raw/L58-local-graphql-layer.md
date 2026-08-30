@@ -1,7 +1,9 @@
-# L58 — T9 interfaces: local GraphQL layer over graph.json stores
+# L58 — Local GraphQL layer over graphs
 
-Verdict: DO NOT BUILD NOW. Graphs are small (largest ~28.7k nodes); consumers are LLM agents served by CLI skill + JSON heredocs; pinned graphifyy==0.9.16 ALREADY ships graphify-mcp (stdio or Streamable HTTP on 127.0.0.1, --api-key, --stateless, size-cap + label sanitization, trigram fuzzy search — 1,719-line serve.py verified). Registering it is config-only, gated by DEC-9 deferral. GraphQL adds ~0.5–1 day build + resident RAM + freshness regating + schema-drift risk for near-zero gain; revisit triggers: non-agent HTTP consumers, cross-corpus federation needs, or permanent MCP blockage — then strawberry-graphql 0.324.0 (MIT, active 2026-08-10) on localhost, ~200 LOC.
+## Evidence status
 
-## Findings table
-
-{"command":"python3 - <<'EOF'\nimport json\nsrc = \"/home/malcolmjones/.omp/profiles/ox-alpha/agent/sessions/-Projects-Codex-V3/2026-08-24T21-43-19-749Z_01a035ba-57c5-7140-b5cc-3df817e29c87.jsonl\"\nbest = \"\"\nfor line in open(src):\n    try: d = json.loads(line)\n    except Exception: continue\n    def scan(o):\n        global best\n        if isinstance(o, dict):\n            for k, v in o.items():\n                if isinstance(v, str) and (\"|Item|\" in v.replace(\" \",\"\") or \"| Item\" in v) and \"strawberry\" in v.lower() and len(v) > len(best): best = v\n                else: scan(v)\n        elif isinstance(o, list):\n            for x in o: scan(x)\n    scan(d)\nhdr = \"# L58 — T9 interfaces: local GraphQL layer over graph.json stores\\n\\nVerdict: DO NOT BUILD NOW. Graphs are small (largest ~28.7k nodes); consumers are LLM agents served by CLI skill + JSON heredocs; pinned graphifyy==0.9.16 ALREADY ships graphify-mcp (stdio or Streamable HTTP on 127.0.0.1, --api-key, --stateless, size-cap + label sanitization, trigram fuzzy search — 1,719-line serve.py verified). Registering it is config-only, gated by DEC-9 deferral. GraphQL adds ~0.5–1 day build + resident RAM + freshness regating + schema-drift risk for near-zero gain; revisit triggers: non-agent HTTP consumers, cross-corpus federation needs, or permanent MCP blockage — then strawberry-graphql 0.324.0 (MIT, active 2026-08-10) on localhost, ~200 LOC.\\n\\n## Findings table\\n\\n\"\nopen(\"/home/malcolmjones/Projects/Graphify/research/raw/L58-local-graphql-layer.md\",\"w\").write(hdr + best)\nprint(\"L58:\", len(best))\nEOF","i":"Persisting L58 findings with verdict header"}
+- Classification: gap.
+- Recovery source revision: `d1dbac36208b0066fc8907bd9fe9408fc5c51a60`.
+- The committed input contains only a verdict fragment and record-recovery instructions; the canonical payload is unavailable.
+- No GraphQL finding is accepted from this lane.
+- This lane is excluded from synthesis; its research result remains unknown.

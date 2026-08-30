@@ -1,6 +1,5 @@
 # LANE L64 — BEIR subset as local eval harness (T10 eval)
 
-Target file: `research/raw/L64-beir-eval-harness.md` (NOT WRITTEN — this agent has no write tool; full content below).
 All versions/URLs verified 2026-08-25 against PyPI/GitHub/HF primary sources.
 
 ## Findings
@@ -18,7 +17,7 @@ All versions/URLs verified 2026-08-25 against PyPI/GitHub/HF primary sources.
 |CQADupStack|dataset|…/cqadupstack.zip|research-use|High|5|2|3|4|2|M|457,199 docs / 13,145 q / 44.9M tokens, 12 StackExchange forums incl. stackoverflow; duplicate-question retrieval = closest BEIR-native analog to code-Q&A dedup; convention metric MRR@10|
 |Quora|dataset|…/quora.zip|research-use|High|3|2|2|2|1|H|522,931 docs / 10,000 q / 4.2M tokens; near-dup detection analog (issue/ticket dedupe); BM25 relatively weak → dense/RRF differentiation visible|
 |Deferred big tier: DBPedia 4.64M, FEVER+Climate-FEVER 5.42M shared corpus, HotpotQA 5.23M, MSMARCO 8.84M docs|strategy|https://github.com/beir-cellar/beir#available-datasets|research-use|High|2|1|2|2|4|M|Multi-hour dense-encode bursts jeopardize MemAvailable≥3072 MiB floor scheduling; revisit post-phase-1; dbpedia-entity (400 q, 38.2 rel/Q) is strongest later graph probe|
-|BRIGHT — stackoverflow + leetcode tasks|dataset|https://brightbenchmark.github.io/|CC-BY-4.0|Medium-High (ICLR 2025; 42k HF downloads)|4|2|4|5|2|M|BEIR has NO native source-code task; BRIGHT fills code-retrieval gap; custom retriever = function returning same {qid:{docid:score}} dict → drop-in for our run pipeline|
+|BRIGHT — stackoverflow + leetcode tasks|dataset|https://brightbenchmark.github.io/|CC-BY-4.0|Medium-High (ICLR 2025; 42k HF downloads)|4|2|4|5|2|M|BEIR has NO native source-code task; BRIGHT fills code-retrieval gap; custom retriever = function returning same {qid:{docid:score}} dict → drop-in for the evaluation pipeline|
 |bm25s==0.3.11|tool|https://github.com/xhluca/bm25s|MIT|High (306k weekly dl)|4|3|0|2|1|H|mmap-loadable NumPy/numba BM25; published single-core BEIR QPS (scifact 2,788 / fiqa 1,237 / trec-covid 484) → reference BM25 oracle to parity-check tantivy scoring|
 |bm25-benchmarks CLI|tool|https://github.com/xhluca/bm25-benchmarks|unverified (check repo before vendoring)|Medium|3|2|0|2|1|M|Reproduces published QPS / index-time / NDCG@10 tables on demand; calibration anchors for harness timing claims|
 |ranx==0.3.21|tool|https://github.com/AmenRa/ranx|MIT|High (ECIR'22/CIKM'22/SIGIR'23)|5|4|2|4|1|H|compare() with paired Fisher randomization + Tukey HSD; fuse()/optimize_fusion() tunes RRF k/weights on train splits; ir_datasets qrels import; dep numba 0.67.0 supports py≥3.10 → cp313 OK|

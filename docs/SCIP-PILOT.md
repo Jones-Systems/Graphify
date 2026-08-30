@@ -2,9 +2,11 @@
 
 Prove the hash-pinned `scip` CLI + pure-stdlib converter path on ONE small
 repo before extending SCIP ingestion to every corpus. Pilot repo:
-**goal-autonomy** (`/home/malcolmjones/Projects/Goal-Autonomy`, 16 tracked
-files, 11 `.py`). Every step below was executed and verified on this host
-2026-08-25; results are recorded, not projected.
+**goal-autonomy** (reported as 16 tracked files, 11 `.py`). The committed
+record says the steps below ran on 2026-08-25. The exact input commit, index,
+converted graph, validation inputs, and command transcript were not committed,
+so the recorded counts and fingerprint are historical reports rather than
+independently reproducible acceptance evidence.
 
 ## Pins (authoritative values in tooling/requirements-scip.txt)
 
@@ -14,13 +16,13 @@ files, 11 `.py`). Every step below was executed and verified on this host
 | @sourcegraph/scip-python | 0.6.6 (npm dist-tags.latest at pilot time) | fetched via `npx -y`; its native launcher bootstraps a JVM automatically |
 | PyPI `scip` | NEVER INSTALL | unrelated GPL flow-cytometry package, not a SCIP client |
 
-## Host prerequisites (verified here)
+## Recorded environment prerequisites
 
-- `node`/`npm` available for `npx`.
-- NO system java needed - the launcher fetches a JVM itself.
+- The recorded environment had `node`/`npm` available for `npx`.
+- The recorded run did not require system Java; the launcher fetched a JVM.
 - `pip` MUST be resolvable on PATH or indexing aborts with "Could not find
   valid pip command" even though nothing is installed with it. This host has
-  none; isolated workaround:
+  none in the recorded environment; isolated workaround:
   ```bash
   python3 -m venv --without-pip /tmp/scip-venv
   curl -fsSL https://bootstrap.pypa.io/get-pip.py -o /tmp/get-pip.py
@@ -38,8 +40,9 @@ files, 11 `.py`). Every step below was executed and verified on this host
    repo. scip-python indexes its CWD (a positional path is ignored) and
    drops `index.scip` into that CWD:
    ```bash
+   export PILOT_REPO=/path/to/goal-autonomy
    mkdir -p /tmp/scip-run/repo
-   git -C ~/Projects/Goal-Autonomy archive HEAD | tar -x -C /tmp/scip-run/repo
+   git -C "$PILOT_REPO" archive HEAD | tar -x -C /tmp/scip-run/repo
    cd /tmp/scip-run/repo
    ```
 3. Make package metadata static IN THE COPY ONLY (upstream quirk:
@@ -55,9 +58,9 @@ files, 11 `.py`). Every step below was executed and verified on this host
    npx -y @sourcegraph/scip-python@0.6.6 index .          # -> index.scip
    scip print --json index.scip > goal-autonomy.index.json
    python3 tooling/scip_convert.py goal-autonomy.index.json \
-     goal-autonomy.graph.json --root ~/Projects/Goal-Autonomy
+     goal-autonomy.graph.json --root "$PILOT_REPO"
    python3 tooling/validate.py goal-autonomy.graph.json \
-     ~/Projects/Goal-Autonomy preflight.json run pin.json
+     "$PILOT_REPO" preflight.json run pin.json
    ```
 
 ## Recorded pilot results (2026-08-25)
@@ -115,9 +118,9 @@ Extend corpus-by-corpus only when ALL hold:
    local-filtering regressed - stop and re-check before promoting.
 3. Determinism: converting an identical index twice produces byte-identical
    graph JSON (nodes and links are emitted sorted; asserted in smoke test).
-4. RAM floor holds: pilot ran with MemAvailable >= 20 GiB against the
-   3072 MiB floor; keep bulk SCIP runs behind the W1-b governor slices per
-   the RANKING hard sequencer (no bursty jobs before B10 lands).
+4. RAM floor holds in a fresh measured run. The historical report says the
+   pilot stayed above 20 GiB MemAvailable against a 3072 MiB floor, but no
+   committed telemetry binds that observation; keep bulk runs behind the
+   applicable resource governor.
 5. Descriptor normalizer decision recorded: either aliasing accepted with a
    recorded baseline or normalized before rollout.
-

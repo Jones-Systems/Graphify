@@ -1,8 +1,6 @@
-PERSIST-NEEDED
-
 # LANE L53 — Agent tool-schema design for search/traversal tools
-Date: 2026-08-25 · Scope: naming conventions, parameter shapes, result-size contracts from function-calling literature + production MCP servers → concrete schema for M Jones graph-query tools.
-Constraints check: pure design/schema lane — zero runtime compute, CPU-only safe, fully offline, no cloud keys (nothing flagged requires-owner-approval).
+Date: 2026-08-25 · Scope: naming conventions, parameter shapes, result-size contracts from function-calling literature + production MCP servers → concrete schema for the target graph-query tools.
+Constraints check: pure design/schema lane — zero runtime compute, CPU-only safe, fully offline, no cloud keys (nothing flagged requires separate review).
 
 ## Candidate table
 
@@ -35,7 +33,7 @@ Surface: exactly 5 read-only tools (<20 guidance; each maps to one internal work
 
 1. `repo_search(query*, mode=hybrid[hybrid|lexical|vector], scope?[all|code|docs|null], path_glob?, lang?, limit 1..30=10, response_format=concise[concise|detailed], cursor?)` — single fused entry point; engine composition stays server-side (Anthropic consolidation rule).
 2. `graph_neighbors(node_id*, direction=in|out|both default both, edge_types[]?, depth 1..3=1, limit 1..50=25)`.
-3. `ppr_rank(seeds*[]maxItems:2, top_k 1..50=20, alpha 0.05..0.5=0.15)` — the schema itself encodes our existing <2-seed PPR gate via maxItems; description explains why more seeds are rejected.
+3. `ppr_rank(seeds*[]maxItems:2, top_k 1..50=20, alpha 0.05..0.5=0.15)` — the schema itself encodes the existing <2-seed PPR gate via maxItems; description explains why more seeds are rejected.
 4. `fetch_nodes(ids*[]maxItems:20, fields=node[node|content|edges]=node)` — stage-2 progressive disclosure; per-id failures reported individually (filesystem batch precedent).
 5. `graph_schema()` — returns node/edge type inventory once (neo4j get_neo4j_schema precedent; cheap planner context).
 

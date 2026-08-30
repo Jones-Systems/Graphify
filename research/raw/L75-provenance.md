@@ -1,1 +1,13 @@
-LANE L75 (T11 federation, lightweight provenance for graph edges): Top pick is FACTORED provenance — one PROV-O-mappable record per run (reusing ENG-C11 deterministic source_fingerprint and ENG-C12 immutable run dirs verbatim; no new infrastructure) plus 2-3 compact attributes per edge ({r:run_ref, c:confidence}, optionally g:generator) in the canonical node-link graph.json. Estimated ~25 B/edge vs ~550 B/edge naive N-Triples global store (template-derived ESTIMATE); gzip erases most RDF-vs-JSON raw-size differences per W3C submission analysis, but RAM under the 512 MiB load cap favors factored attrs (json.loads duplicates repeated value strings; intern run refs post-load). Interop path: prov PyPI 3.1.0 (MIT, 2026-08-07, zero core deps) exports/validates the same model as PROV-O/PROV-JSONLD behind a flag. Agent value maps directly onto existing contracts: citation entailment (EVAL-C23) via edge→run→src_fp chains, valid/stale/unknown routing (ENG-C11), O(run)-scoped blast-radius invalidation and WR-C16-style rollback by run_id, conflict resolution between runs by recency+fingerprint, and confidence feeding fusion gating (L17-style weighted RRF). Full 10-row table with scores, byte-cost breakdown, normative field set, and dated primary sources delivered in message body; persistence needed (no write tool): research/raw/L75.md
+# L75 — Lightweight provenance for graph edges
+
+## Evidence status
+
+- Classification: incomplete input.
+- Recovery source revision: `d1dbac36208b0066fc8907bd9fe9408fc5c51a60`.
+- The committed input is a conclusion-only fragment; its claimed comparison table, byte analysis, normative field set, and sources are unavailable.
+- No canonical lane report is available in committed repository evidence.
+- This lane is excluded from synthesis; its research result remains unknown.
+
+## Unverified design lead
+
+The preserved fragment proposes one provenance record per extraction run plus compact per-edge references for run, confidence, and optional generator identity, with a PROV-O-compatible export layer. This is a design lead only: field semantics, byte-cost claims, source support, and validation requirements must be re-established before use.

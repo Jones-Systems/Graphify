@@ -1,1 +1,9 @@
-Lane L35 (T5 code-graphs): compared 6 import/dependency-graph extractors across languages for feeding node-link graphs on the 16-core/no-GPU Debian VPS (probes 2026-08-25: Node v24.19.0 present, Go absent). Winners per language — Python: grimp 3.15 (BSD-2, Rust-backed multithreaded scanning since 3.9/3.11, line-level import provenance, namespace packages, cycle-breakers; StackFit 5, AdoptCost 1). TS/JS: dependency-cruiser 18.2.0 (MIT, stable --output-type json schema, tsconfig/webpack resolution, cached, Node-24-compatible) edges out madge 8.0.0 (MIT, --json works but ad-hoc object shape, last publish 2024-08, mixed-syntax/dynamic-import caveats). Go: go list -deps -json is compiler-grade ground truth (Imports/Deps/DepOnly/vendor-aware, field-selectable JSON) but toolchain not installed — flagged requires-owner-approval for install; conditional on Go repos existing. Rejected as feeders: pydeps 3.0.7 (bytecode-opcode reachability model, Graphviz-bound, no native JSON; keep only for ad-hoc cycle visualization) and stdlib modulefinder (script-centric, approximate, no provenance, though NOT deprecated as of CPython 3.14 docs). All picks are permissive-licensed, offline-capable, low-RAM. Full scored table delivered inline in final message under PERSIST-NEEDED (lane had no write tool; no raw path was supplied).
+# L35 — Import and dependency graph extractors
+
+## Evidence status
+
+- Classification: gap.
+- Recovery source revision: `d1dbac36208b0066fc8907bd9fe9408fc5c51a60`.
+- The committed input is a one-paragraph conclusion and states that its scored comparison was not persisted.
+- No canonical findings table or supporting source set is available in committed repository evidence.
+- This lane is excluded from synthesis; its research result remains unknown.
