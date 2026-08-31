@@ -21,7 +21,7 @@ misrouted input supplies no usable canonical result (`CAN-U100`).
 ## Supported synthesis
 
 <!-- negative-boundary: BND-SE-SUPPORTED status=no_supported_claim claims=none -->
-No supported synthesis statement remains in this lane range.
+This section contains no registered positive claim.
 
 ## Unsupported or unknown
 
@@ -33,4 +33,4 @@ support PageRank or centrality-prior fusion.
 
 - Supported: none.
 <!-- negative-boundary: BND-SE-CONCLUSION status=unsupported_or_unknown claims=none -->
-- Unsupported/unknown: This range supplies no validated, consumed conclusion; static and generative reranking, learned usage signals, and centrality priors all remain unsupported or unknown for this candidate.
+- Unsupported/unknown: No conclusion in this section is supported; every conclusion is unsupported or unknown.

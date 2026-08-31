@@ -62,7 +62,8 @@ for every excluded row.
 ## Evidence-bound experiment order
 
 <!-- negative-boundary: BND-EXP-SCOPE status=scope_limit claims=EXP-01,EXP-02,EXP-03,EXP-04,EXP-05,EXP-06,EXP-07,EXP-08,EXP-09 -->
-This order is a dependency-aware research sequence, not an adoption or deployment decision.
+This section orders research only; it does not establish adoption, deployment,
+production readiness, or support beyond the registered positive claims.
 
 | Order | Candidate experiment | Validated support | Required gate |
 | ---: | --- | --- | --- |
@@ -77,12 +78,9 @@ This order is a dependency-aware research sequence, not an adoption or deploymen
 | 9 | <!-- positive-claim: EXP-09 --> Evaluate frontmatter query behavior without adding a persistence claim. | L93 | Public note fixtures, schema variance tests, and bounded query results. |
 
 <!-- negative-boundary: BND-EXP-EXCLUSIONS status=unsupported_or_unknown claims=EXP-01,EXP-02,EXP-03,EXP-04,EXP-05,EXP-06,EXP-07,EXP-08,EXP-09 -->
-Excluded lanes cannot advance an experiment. L60, L66, and L99 contain
-qualified public-source material but are not consumed and do not advance this
-order. The 46 inherited mixed-context lanes above are also excluded and do not
-advance it. The corpus does not support a reranker survey (L21), canonical L58
-or L59 conclusions, the L69 A/B protocol, L70 judge-bias conclusions,
-canonical L74, or canonical L100.
+Only the registered positive claims may support this section; every excluded,
+incomplete, unconsumed, missing, misrouted, origin-unbound, or otherwise
+unregistered input contributes no positive support.
 
 ## Synthesis coverage
 
@@ -98,6 +96,8 @@ canonical L74, or canonical L100.
 
 Source review: independent Graphify public-safety review. Every row remains
 bound to its finding ID, reviewed revision, severity, and historical effect.
+The canonical machine-readable tuples, including each original outcome, are
+stored in `research/positive-claims.json` and checked field-for-field below.
 
 | Finding | Reviewed revision | Severity | Historical effect | Corpus disposition |
 | --- | --- | --- | --- | --- |

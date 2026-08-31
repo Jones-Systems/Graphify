@@ -36,4 +36,4 @@ L26 are not repaired by swapping their claims in synthesis.
 
 - Supported: <!-- positive-claim: SB-04 --> Splink, structural-code extraction, and bounded batch-extraction experiments have limited public-source support.
 <!-- negative-boundary: BND-SB-CONCLUSION status=unsupported_or_unknown claims=SB-04 -->
-- Unsupported/unknown: No identifier-governance scheme, dependency extractor, SCIP pipeline, model, or deployment profile is accepted as ready.
+- Unsupported/unknown: Only the registered conclusion claim SB-04 is supported; every other conclusion in this section is unsupported or unknown.
