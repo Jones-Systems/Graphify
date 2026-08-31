@@ -1,125 +1,143 @@
-# SCIP pilot protocol - R2 symbol edges (W1-c)
+# SCIP pilot protocol — public-fixture symbol edges
 
-Prove the hash-pinned `scip` CLI + pure-stdlib converter path on ONE small
-repo before extending SCIP ingestion to every corpus. Pilot repo:
-**goal-autonomy** (reported as 16 tracked files, 11 `.py`). The committed
-record says the steps below ran on 2026-08-25. The exact input commit, index,
-converted graph, validation inputs, and command transcript were not committed,
-so the recorded counts and fingerprint are historical reports rather than
-independently reproducible acceptance evidence.
+Prove a hash-pinned `scip` CLI, an independently pinned SCIP indexer, and the
+pure-standard-library converter on one small public fixture before considering
+any broader ingestion. This document does not identify or authorize access to
+any protected repository. A prior uncommitted run report is historical context
+only: its source commit, input index, converted graph, validation inputs, and
+transcript are unavailable, so none of its reported results are acceptance
+evidence.
 
-## Pins (authoritative values in tooling/requirements-scip.txt)
+## Fail-closed toolchain gate
 
-| tool | version | integrity |
-|------|---------|-----------|
-| Go `scip` CLI (github.com/scip-code/scip) | v0.9.0 | `scip-linux-amd64.tar.gz` sha256 `fc2e7273e110be9f35924da1066000183791e8bfdb0391355de6eaaa070fec75`; the committed record reports agreement between the release digest and a downloaded-file hash |
-| @sourcegraph/scip-python | 0.6.6 (npm dist-tags.latest at pilot time) | fetched via `npx -y`; its native launcher bootstraps a JVM automatically |
-| PyPI `scip` | NEVER INSTALL | unrelated GPL flow-cytometry package, not a SCIP client |
+The Go `scip` CLI is pinned in `tooling/requirements-scip.txt`. No executable
+Python-indexer bootstrap is committed. In particular, do not use `npx`,
+`npm install`, a remote Python bootstrap script, or a launcher that downloads a
+JVM at run time.
 
-## Recorded tool prerequisites
+Before any indexer execution, an operator must supply one immutable lock record
+for the run. The lock record must contain all of the following:
 
-- `node` and `npm` are required for the recorded `npx` path.
-- The recorded launcher fetched its own JVM; this behavior requires fresh
-  verification before use.
-- `pip` MUST be resolvable on PATH or indexing aborts with "Could not find
-  valid pip command" even though nothing is installed with it. The recorded
-  workaround used an isolated temporary environment:
-  ```bash
-  python3 -m venv --without-pip /tmp/scip-venv
-  curl -fsSL https://bootstrap.pypa.io/get-pip.py -o /tmp/get-pip.py
-  /tmp/scip-venv/bin/python3 /tmp/get-pip.py -q
-  export PATH=/tmp/scip-venv/bin:$PATH
-  ```
-- Python 3.13 triggers a benign "Python version ... is unsupported" notice
-  from the bundled pyright; indexing still completed for all files.
+- exact package name and version for the SCIP indexer;
+- local package artifact path, byte count, and cryptographic digest;
+- exact runner path, version output, byte count, and cryptographic digest;
+- exact Python runtime path/version/digest and an immutable dependency lock;
+- exact JVM distribution/version/path/digest when the runner can invoke Java;
+- the pinned Go `scip` path/version/digest;
+- the network-denial mechanism used while indexing; and
+- the digest of the lock record itself in the run evidence.
 
-## Protocol
+Every digest must identify the exact local bytes that will execute. Missing,
+mutable, registry-resolved, or mismatched evidence blocks the run. The runner
+must be invoked by its verified absolute path in a network-denied sandbox; an
+auto-downloading launcher is not an acceptable substitute. This repository
+intentionally provides no fallback install or bootstrap command.
 
-1. Download + verify the pinned CLI exactly as written in
-   tooling/requirements-scip.txt; `./scip version` must print v0.9.0.
-2. Work on a tracked-only COPY so the indexer never writes into the real
-   repo. scip-python indexes its CWD (a positional path is ignored) and
-   drops `index.scip` into that CWD:
-   ```bash
-   export PILOT_REPO=/path/to/goal-autonomy
-   mkdir -p /tmp/scip-run/repo
-   git -C "$PILOT_REPO" archive HEAD | tar -x -C /tmp/scip-run/repo
-   cd /tmp/scip-run/repo
-   ```
-3. Make package metadata static IN THE COPY ONLY (upstream quirk:
-   scip-python 0.6.6 crashes in `normalizeNameOrVersion` when
-   `[project] version` is dynamic, and it wants a `[tool.pyright]` table):
-   replace `dynamic = ["version"]` with `version = "0.0.0"`, then append:
-   ```toml
-   [tool.pyright]
-   include = ["src", "tests"]
-   ```
-4. Index, dump, convert, validate:
-   ```bash
-   npx -y @sourcegraph/scip-python@0.6.6 index .          # -> index.scip
-   scip print --json index.scip > goal-autonomy.index.json
-   python3 tooling/scip_convert.py goal-autonomy.index.json \
-     goal-autonomy.graph.json --root "$PILOT_REPO"
-   python3 tooling/validate.py goal-autonomy.graph.json \
-     "$PILOT_REPO" preflight.json run pin.json
-   ```
+## Source binding and isolated copy
 
-## Recorded pilot results (2026-08-25)
+Use a public fixture that the operator is authorized to read. Bind the run to
+an explicit full commit ID and create a new private temporary directory. Never
+archive `HEAD`, reuse a pre-existing destination, or index the source checkout.
 
-| stage | result |
-|---|---|
-| indexing | 11 of 11 `.py` files ("Successfully wrote SCIP index"); index.scip 599,974 B |
-| index JSON | 1,166,179 B (`scip print --json`) |
-| converter output | **nodes=783 links=547** kinds={ref: 547} |
-| node split | 608 defined in-corpus across 11 docs + 175 external dependency seeds (no source_file) |
-| noise filtered | 2,282 `local N` function-local symbols dropped; self-links=0; anchorless docs=0 |
-| validator | **PASS** nodes=783 edges=547 fatals=0 warn={external_bare_import:0, conservative_internal_looking:0} |
-| graph fingerprint | sha256 `054a25becb3d9d57880d436beb4ba7454c2951ee1c79fbd96f091654cb4326b1` |
-| top coupling | `src.goal_autonomy` module 188 deps, `cli` 121, `test_goal_snapshot_store` 58 |
+```bash
+set -eu
 
-Converter semantics used above (documented because SCIP fixes the data, not
-the graph): one node per symbol string; source_file = first defining
-document; cross-file references anchored on the document's module symbol
-(descriptor ending `/__init__:`), falling back to its first definition;
-intra-document references skipped; implements/type-def edges derive from
-SymbolInformation.relationships when present.
+: "${PILOT_SOURCE_REPO:?set an authorized public-fixture checkout}"
+: "${PILOT_SOURCE_COMMIT:?set the exact 40-hex commit}"
 
-Unresolved-class findings recorded during the pilot:
+case "$PILOT_SOURCE_COMMIT" in
+  [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+  *) echo "PILOT_SOURCE_COMMIT must be a full lowercase commit ID" >&2; exit 2 ;;
+esac
 
-- `external_bare_symbol` count=175: never-defined symbols used as ref
-  targets - mostly `python-stdlib 3.11` entities and `unittest.TestCase`,
-  plus re-spelled in-corpus modules (next bullet). Kept as seed nodes;
-  reported on stderr by the converter.
-- scip-python 0.6.6 emits NO relationships and no `kind` field, so this
-  pilot yields ref edges only. implements/type-def links activate without
-  converter changes once a relationship-emitting indexer runs
-  (rust-analyzer, scip-typescript).
-- Descriptor aliasing: one module appears both as backticked definition form
-  (`` `src.goal_autonomy.cli`/__init__: ``) and bare import form
-  (`goal_autonomy.cli/__init__:`), producing near-duplicate nodes on
-  import-heavy graphs. Acceptable at pilot scale; land a descriptor
-  normalizer before corpus-wide promotion.
-- `symbol_roles` arrives as an int bitmask (Definition=1, read-ref=8), not a
-  name array; the converter accepts both encodings.
+resolved_commit="$(git -C "$PILOT_SOURCE_REPO" rev-parse --verify \
+  "$PILOT_SOURCE_COMMIT^{commit}")"
+[ "$resolved_commit" = "$PILOT_SOURCE_COMMIT" ] || {
+  echo "source commit did not resolve exactly" >&2
+  exit 2
+}
 
-Synthetic acceptance (no real indexer needed): tooling/scip_convert.py is
-smoke-tested against a handcrafted 2-document / 5-symbol index exercising
-def/ref/implements/type-def/self-link/local filtering; the output passes
-tooling/validate.py (nodes=5 edges=3 PASS) and is byte-identical across
-file and stdin input runs.
+PILOT_RUN_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/graphify-scip-pilot.XXXXXXXX")"
+cleanup() {
+  chmod -R u+w -- "$PILOT_RUN_ROOT" 2>/dev/null || true
+  rm -rf -- "$PILOT_RUN_ROOT"
+}
+trap cleanup EXIT HUP INT TERM
 
-## Success criteria for extending to all corpora
+PILOT_COPY="$PILOT_RUN_ROOT/repo"
+mkdir -m 700 -- "$PILOT_COPY"
+[ -z "$(find "$PILOT_COPY" -mindepth 1 -print -quit)" ] || {
+  echo "pilot destination is not empty" >&2
+  exit 2
+}
 
-Extend corpus-by-corpus only when ALL hold:
+git -C "$PILOT_SOURCE_REPO" archive --format=tar "$resolved_commit" |
+  tar -xf - -C "$PILOT_COPY"
+[ -n "$(find "$PILOT_COPY" -mindepth 1 -print -quit)" ] || {
+  echo "pilot archive produced an empty fixture" >&2
+  exit 2
+}
+readonly PILOT_RUN_ROOT PILOT_COPY resolved_commit
+```
 
-1. validate.py returns PASS or PASS_WITH_WARNINGS with zero new fatal
-   classes; record each graph's warning baseline per DEC-6 before moving on.
-2. Edge budget sane: cross-file ref links within ~50x the file count of the
-   corpus (pilot ratio: 547 edges / 11 files). A blowup means anchoring or
-   local-filtering regressed - stop and re-check before promoting.
-3. Determinism: converting an identical index twice produces byte-identical
-   graph JSON (nodes and links are emitted sorted; asserted in smoke test).
-4. A fresh run establishes peak memory and preserves its declared resource
-   reserve. No committed telemetry binds the recorded pilot to a host budget.
-5. Descriptor normalizer decision recorded: either aliasing accepted with a
-   recorded baseline or normalized before rollout.
+The trap owns only the newly allocated `mktemp` directory. The protocol never
+accepts an operator-selected cleanup target.
+
+## Copy-only fixture preparation
+
+If the selected indexer requires static package metadata, make the minimum
+change inside `PILOT_COPY` only and record the patch in the run evidence. Do not
+prescribe source-package names, modules, test paths, or symbol descriptors in
+this public protocol. The fixture preparation must be deterministic and must
+not read from the source checkout after the archive is created.
+
+## Index, convert, and validate
+
+Indexing remains blocked until the fail-closed toolchain gate above is
+satisfied. The operator-owned runbook must record the exact argv and environment
+for the verified runner; this document deliberately does not provide a package
+manager or launcher command.
+
+After the network-denied indexer produces `index.scip` inside `PILOT_COPY`:
+
+1. verify the pinned Go `scip` binary digest again and record `scip version`;
+2. dump `index.scip` to JSON inside `PILOT_RUN_ROOT`;
+3. run `tooling/scip_convert.py` with `--root "$PILOT_COPY"`;
+4. run `tooling/validate.py` against `PILOT_COPY`; and
+5. preserve the source commit, lock-record digest, exact argv, input/output
+   digests, validation output, and resource measurements as one run record.
+
+No output filename, symbol count, graph fingerprint, module name, test name,
+descriptor shape, or coupling statistic from a protected corpus belongs in
+this protocol.
+
+## Converter acceptance
+
+Before a fixture run, exercise the converter with a generated public synthetic
+index that covers definitions, references, relationships, self-reference
+filtering, and local-symbol filtering. Require byte-identical output from file
+and standard-input paths and require `tooling/validate.py` to pass. Synthetic
+success proves converter mechanics only; it does not validate an indexer,
+fixture, deployment profile, or broader corpus.
+
+## Success criteria
+
+Extension beyond the one public fixture is out of scope unless every criterion
+below is recorded for a fresh, independently reviewable run:
+
+1. the source commit and every executable byte are immutably bound as specified
+   by the lock gate;
+2. indexing runs with network access denied and no package/JVM bootstrap;
+3. validation has no new fatal class, with warnings recorded rather than
+   silently accepted;
+4. repeated conversion of the same index is byte-identical;
+5. edge growth stays below an operator-declared bound established from public
+   fixture evidence;
+6. peak memory, latency, and throughput are measured on the deployment target
+   with the exact concurrency/thread/context parameters recorded; and
+7. symbol-alias behavior is either normalized or explicitly bounded by a
+   public-fixture baseline.
+
+Authority effect: none. This protocol does not authorize installation,
+network access, protected-repository access, pilot execution, promotion, or
+deployment.

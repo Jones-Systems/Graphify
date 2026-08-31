@@ -67,6 +67,22 @@ Set the per-run cap from current available memory minus the declared floor; the 
 |QuantCall harness|benchmark/repo|https://github.com/Happynood/quant-toolcall-bench|unlisted|early (2025/26)|4|2|4|4|2|M|Per-quant SVR/TSA/AC/FCR; reusable methodology for a target extraction golden set; finding: family > size predicts quant fragility|
 |Kurt 2026 unified eval + released quants|evidence/artifact|https://arxiv.org/abs/2601.14277|arXiv paper; quants on HF uygarkurt/Llama-3.1-8B-Instruct-GGUF|new (2026-01)|4|2|4|4|2|M-H|Only controlled single-checkpoint sweep of 13 GGUF formats incl. CPU throughput; proves format choice ≠ bit-width label; template for a task-specific evaluation|
 
-**Verdict:** Top pick **Q5_K_M** for 7–14B instruct GGUF extraction models — ~99.1% PPL retention, downstream Avg within 0.11 pp of f16, equal-or-best MMLU across two independent quant sets, ~36% of f16 RAM (8B ≈ 7.1 GiB total @8k ctx; 14B ≈ 12 GiB), faster CPU decode than both f16 and Q8_0. Integration: llama-server/Ollama with response_format=json_schema (syntax guaranteed regardless of bits), --cache-type-k/v q8_0, mmap, 16 threads; adopt Q4_K_M only after passing llama-perplexity KLD<~0.02 vs f16 plus a 100-doc golden-set entity/relation span-F1 gate; never deploy ≤Q3_K for schema-bearing tasks (strict-format collapse: GSM8K-SM 24.6→9.9); skip f16 — Q8_0 is statistically indistinguishable at half the RAM.
+**Verdict:** The recorded public comparisons make **Q5_K_M** an
+accuracy-oriented experiment candidate and **Q4_K_M** a compression-oriented
+candidate; Q8_0 is the lower-drift reference. The cited perplexity, benchmark,
+memory, and throughput values are source-specific observations or estimates,
+not a deployment profile. No thread count, slot count, context size, cache
+type, throughput target, golden-set size, or quality threshold is selected by
+this lane.
+
+A deployment-target comparison must hold the exact model artifact, prompt,
+schema, fixture, runtime build, and seed constant while sweeping declared
+thread, parallel-slot, context, batch, and cache parameters. Report semantic
+extraction metrics and abstention independently from syntactic validity;
+separately report prompt-processing rate, generation rate, p50/p95 latency,
+peak RSS, and aggregate throughput. The fixture size and acceptance thresholds
+must be justified before the run. Quantization at or below Q3_K remains outside
+this experiment set because the cited strict-format evidence shows material
+failure risk.
 
 Environment fit: all picks are offline-capable and CPU-only, require no external API keys, and retain the tooling, model, and artifact license qualifications listed above.
