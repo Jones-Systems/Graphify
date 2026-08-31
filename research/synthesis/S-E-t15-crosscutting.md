@@ -2,7 +2,7 @@
 
 ## Source binding
 
-- Exact raw-input revision: `c4ed36dc8394cc58a69bb553fc0d3f5e05b13ed0`.
+- Exact raw-input revision: `60f6935f26c912a32aac0e1aa0bb6b5dda063c9b`.
 - Lane range: L97–L100.
 - Content-validated and consumed inputs: 0 of 4 lanes.
 - Qualified but unconsumed inputs: 1 of 4 lanes.

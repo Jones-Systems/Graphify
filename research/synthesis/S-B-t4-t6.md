@@ -2,13 +2,14 @@
 
 ## Source binding
 
-- Exact raw-input revision: `c4ed36dc8394cc58a69bb553fc0d3f5e05b13ed0`.
+- Exact raw-input revision: `60f6935f26c912a32aac0e1aa0bb6b5dda063c9b`.
 - Lane range: L22–L42.
 - Content-validated and consumed inputs: 6 of 21 lanes.
 - This is a partial synthesis, not a completeness claim.
 - Every consumed lane below is bound only to the exact eligible Git selector
-  `c4ed36dc8394cc58a69bb553fc0d3f5e05b13ed0:<mapped artifact path>` in
-  `research/RANKING.md`; reviewed-input hashes preserve provenance only.
+  `60f6935f26c912a32aac0e1aa0bb6b5dda063c9b:<mapped artifact path>` in
+  `research/positive-claims.json`; reviewed-input hashes preserve provenance
+  only.
 
 Validated and consumed inputs: L22, L29, L33, L37, L40, and L42.
 
@@ -21,9 +22,9 @@ without a findings body; L35 lacks its comparison table and sources.
 
 | Supported statement | Inputs | Boundary |
 | --- | --- | --- |
-| Splink is a public-source entity-resolution candidate. | L22 | Representative public data, clerical labels, blocking choices, precision/recall, scale, and identifier governance remain unvalidated. |
-| Tree-sitter and Joern are documented structural-code extraction candidates. | L29, L33 | Language coverage, reference accuracy, resource use, and graph-schema fit require a public benchmark; no SCIP or dependency-extractor conclusion is available. |
-| Bounded llama.cpp profiles, small-model comparisons, and quantization gates can frame a batch-extraction experiment. | L37, L40, L42 | Model licenses, held-out extraction accuracy, structured-output reliability, throughput, and resource limits must be measured on public fixtures. |
+| <!-- positive-claim: SB-01 --> Splink is a public-source entity-resolution candidate. | L22 | Representative public data, clerical labels, blocking choices, precision/recall, scale, and identifier governance remain unvalidated. |
+| <!-- positive-claim: SB-02 --> Tree-sitter and Joern are documented structural-code extraction candidates. | L29, L33 | Language coverage, reference accuracy, resource use, and graph-schema fit require a public benchmark; no SCIP or dependency-extractor conclusion is available. |
+| <!-- positive-claim: SB-03 --> Public comparisons of bounded llama.cpp profiles, small-model candidates, and quantization formats can frame a batch-extraction experiment. | L37, L40, L42 | Bind the exact runtime/model/prompt/schema/fixture first. Measure semantic quality and abstention separately from syntax validity, then measure target-host memory, prompt rate, generation rate, p50/p95 latency, concurrency, and aggregate throughput under declared parameters. |
 
 ## Unsupported or unknown
 

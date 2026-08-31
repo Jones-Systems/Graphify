@@ -3,10 +3,11 @@
 ## Corpus status
 
 - Reviewed input revision: `d1dbac36208b0066fc8907bd9fe9408fc5c51a60`.
-- Candidate raw-input revision: `c4ed36dc8394cc58a69bb553fc0d3f5e05b13ed0`.
-- Exact positive selection: only the 21 `validated` rows in the source map are
-  eligible inputs. Each is bound to the immutable Git selector
-  `c4ed36dc8394cc58a69bb553fc0d3f5e05b13ed0:<artifact path>`.
+- Candidate raw-input revision: `60f6935f26c912a32aac0e1aa0bb6b5dda063c9b`.
+- Exact positive selection: only the 21 lanes in
+  `research/positive-claims.json` are eligible, and only for the exact claim
+  IDs listed there. Each is bound to an immutable Git blob at the candidate
+  raw-input revision.
 - Other non-missing rows retain reviewed and candidate blob identity for
   provenance only; their presence at the candidate raw-input revision does not
   make them eligible for synthesis.
@@ -17,6 +18,19 @@
   inputs, and 5 missing inputs.
 - A filename count is not an artifact-validity count. This document makes no research-complete or corpus-complete claim.
 - Immutable origins for L13 and L19 remain unknown.
+
+Here, `validated` has one narrow meaning: the exact candidate-revision blob was
+reviewed as public-safe, aligned to its manifest subject, minimally complete,
+and citation-bearing for one or more allowlisted claims. It does not mean that
+the sources are current, the claims are independently reproduced, the lane is
+complete, or any implementation or deployment is accepted. A validated lane
+supports no claim absent from `research/positive-claims.json`.
+
+The machine-readable map also owns the affected-check contract. Run
+`python3 tooling/check_research_provenance.py --self-test` for the focused
+parser test and `python3 tooling/check_research_provenance.py` for all declared
+provenance, count, allowlist, citation, partition, compatibility, and
+public-safety groups.
 
 Canonical unknown identifiers are preserved exactly:
 
@@ -51,15 +65,15 @@ This order is a dependency-aware research sequence, not an adoption or deploymen
 
 | Order | Candidate experiment | Validated support | Required gate |
 | ---: | --- | --- | --- |
-| 1 | Establish a reproducible PostgreSQL hybrid-search run in a public benchmark harness. | L20, L64 | Representative qrels, fixed metrics, and reproducible timing. |
-| 2 | Compare SQLite, FalkorDB, and LadybugDB as storage candidates. | L43, L48–L49 | Durability, concurrency, license, memory, and latency measurements on a public fixture. |
-| 3 | Evaluate structural code extraction and graph construction. | L29, L33 | Language coverage, reference accuracy, bounded resources, and a public test corpus. |
-| 4 | Evaluate constrained batch extraction and quantization profiles. | L37, L40, L42 | Held-out extraction labels, structured-output validity, and measured quality/throughput. |
-| 5 | Pilot Splink entity resolution. | L22 | Representative public entity data, clerical labels, precision/recall, and reversible identifiers. |
-| 6 | Exercise a small read-only, typed, response-bounded query surface. | L53–L55, L57 | Negative authorization tests, output caps, and public-fixture measurements. |
-| 7 | Measure federated aggregation and refresh with bounded scheduling. | L72, L78–L79, L83 | Freshness, partial-result, contention, and failure-recovery tests on public fixtures. |
-| 8 | Evaluate token-budgeted traversal. | L86 | Retained-evidence coverage and fixed token-budget tests. |
-| 9 | Evaluate frontmatter query behavior without adding a persistence claim. | L93 | Public note fixtures, schema variance tests, and bounded query results. |
+| 1 | <!-- positive-claim: EXP-01 --> Establish a reproducible PostgreSQL hybrid-search run in a public benchmark harness. | L20, L64 | Representative qrels, fixed metrics, and reproducible timing. |
+| 2 | <!-- positive-claim: EXP-02 --> Compare SQLite, FalkorDB, and LadybugDB as storage candidates. | L43, L48–L49 | Durability, concurrency, license, memory, and latency measurements on a public fixture. |
+| 3 | <!-- positive-claim: EXP-03 --> Evaluate structural code extraction and graph construction. | L29, L33 | Language coverage, reference accuracy, bounded resources, and a public test corpus. |
+| 4 | <!-- positive-claim: EXP-04 --> Evaluate a parameterized constrained batch-extraction and quantization comparison. | L37, L40, L42 | Bind the exact runtime/model/prompt/schema/fixture; measure semantic quality separately from syntax, then measure target-host memory, rates, latency, concurrency, and aggregate throughput under declared parameters. |
+| 5 | <!-- positive-claim: EXP-05 --> Pilot Splink entity resolution. | L22 | Representative public entity data, clerical labels, precision/recall, and reversible identifiers. |
+| 6 | <!-- positive-claim: EXP-06 --> Exercise a small read-only, typed, response-bounded query surface. | L53–L55, L57 | Negative authorization tests, output caps, and public-fixture measurements. |
+| 7 | <!-- positive-claim: EXP-07 --> Measure federated aggregation and refresh with bounded scheduling. | L72, L78–L79, L83 | Freshness, partial-result, contention, and failure-recovery tests on public fixtures. |
+| 8 | <!-- positive-claim: EXP-08 --> Evaluate token-budgeted traversal. | L86 | Retained-evidence coverage and fixed token-budget tests. |
+| 9 | <!-- positive-claim: EXP-09 --> Evaluate frontmatter query behavior without adding a persistence claim. | L93 | Public note fixtures, schema variance tests, and bounded query results. |
 
 Excluded lanes cannot advance an experiment. L60, L66, and L99 contain
 qualified public-source material but are not consumed and do not advance this
@@ -74,9 +88,9 @@ canonical L74, or canonical L100.
 | --- | --- | ---: | ---: | ---: | --- |
 | S-A | L01–L21 | 1 | 0 | 20 | L01–L19, L21 |
 | S-B | L22–L42 | 6 | 0 | 15 | L23–L28, L30–L32, L34–L36, L38–L39, L41 |
-| S-C | L43–L70 | 8 | 2 | 18 | L44–L47, L50–L52, L56, L58–L59, L61–L63, L65, L67–L70 |
-| S-D | L69–L96 | 6 | 0 | 22 | L69–L71, L73–L77, L80–L82, L84–L85, L87–L92, L94–L96 |
-| S-E | L97–L100 | 0 | 1 | 3 | L97–L98, L100 |
+| S-C | L43–L70 | 8 | 2 | 18 | L44–L47, L50–L52, L56, L58–L63, L65–L70 |
+| S-D | L71–L96 | 6 | 0 | 20 | L71, L73–L77, L80–L82, L84–L85, L87–L92, L94–L96 |
+| S-E | L97–L100 | 0 | 1 | 3 | L97–L100 |
 
 ## Historical finding record
 
@@ -95,13 +109,46 @@ bound to its finding ID, reviewed revision, severity, and historical effect.
 Authority effect: none. No adoption, publication, activation, deployment, or
 source-currentness claim is made.
 
+## Historical R1–R20 compatibility map
+
+Downstream `R1`–`R20` references retain the identities originally defined at
+`e1c8b4395d135b4dad3bbbbcaef6571f5425db5f:research/RANKING.md`. This table is
+an identity bridge only. It does not restore the historical ranking, scores,
+implementation sketches, source claims, readiness, or authority. In
+particular, it does not make any excluded, incomplete, origin-unbound,
+misrouted, missing, or qualified lane validated. Current positive evidence must
+come from `research/positive-claims.json`.
+
+| Historical ID | Stable label | Compatibility status |
+| --- | --- | --- |
+| R1 | Stable federated node identity | `historical_identity_only` |
+| R2 | SCIP-to-KG symbol edges | `historical_identity_only` |
+| R3 | Hybrid retrieval backbone | `historical_identity_only` |
+| R4 | Retrieval evaluation harness and promotion gate | `historical_identity_only` |
+| R5 | Unified per-corpus SQLite store | `historical_identity_only` |
+| R6 | Consolidated read-only MCP server | `historical_identity_only` |
+| R7 | Splink entity-resolution backbone | `historical_identity_only` |
+| R8 | Content-addressed incremental refresh | `historical_identity_only` |
+| R9 | Cross-corpus RRF scatter-gather | `historical_identity_only` |
+| R10 | Token-budget-ledger context packing | `historical_identity_only` |
+| R11 | Entity-identity governance package | `historical_identity_only` |
+| R12 | Offline embedding model | `historical_identity_only` |
+| R13 | Parquet snapshots and SQL surface | `historical_identity_only` |
+| R14 | Recall-first blocking engine | `historical_identity_only` |
+| R15 | Entity-resolution evaluation and promotion gates | `historical_identity_only` |
+| R16 | SQLite freshness and validation ledger | `historical_identity_only` |
+| R17 | Layered output and truncation contract | `historical_identity_only` |
+| R18 | Shared-server authentication and isolation | `historical_identity_only` |
+| R19 | Federate-don't-merge posture | `historical_identity_only` |
+| R20 | HTTP-cache freshness envelope | `historical_identity_only` |
+
 ## Exact reviewed provenance and candidate eligibility map
 
 The Git blob OID and SHA-256 identify each input at the reviewed revision.
 They preserve reviewed provenance without establishing an earlier origin. For
-the 21 `validated` rows only, the source path combined with the sanitized
-raw-input revision above is the exact eligible Git blob selector. Every other
-row preserves identity or an explicit gap but grants no synthesis eligibility.
+the 21 `validated` rows only, `research/positive-claims.json` binds the source
+path and candidate-revision blob to exact claim IDs. Every other row preserves
+identity or an explicit gap but grants no synthesis eligibility.
 
 | Lane | Artifact path or gap | Public-safe subject label | Class | Reviewed revision | Input blob OID | Input SHA-256 | Authority note |
 | --- | --- | --- | --- | --- | --- | --- | --- |

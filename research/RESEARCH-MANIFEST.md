@@ -111,5 +111,7 @@ QualityGain / AdoptionCost(0-5, lower better) / Confidence(H/M/L).
 | L99 | T15 rerank | Learning-to-rank from usage signals we can capture locally |
 | L100 | T15 rerank | PageRank/centrality priors fused into hybrid ranking |
 
-Phases: P1=L1-10 … P10=L91-100. Group syntheses: S-A(T1-T3) S-B(T4-T6)
-S-C(T7-T10) S-D(T11-T14) S-E(T15+cross-cutting), dispatched alongside later waves.
+Phases: P1=L1-10 … P10=L91-100. Group syntheses form one exact lane
+partition: S-A(T1-T3)=L01–L21 (21 lanes), S-B(T4-T6)=L22–L42 (21),
+S-C(T7-T10)=L43–L70 (28), S-D(T11-T14)=L71–L96 (26), and
+S-E(T15+cross-cutting)=L97–L100 (4). Total: 100 lanes with no overlap or gap.

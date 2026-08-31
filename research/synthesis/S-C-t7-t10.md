@@ -2,14 +2,15 @@
 
 ## Source binding
 
-- Exact raw-input revision: `c4ed36dc8394cc58a69bb553fc0d3f5e05b13ed0`.
+- Exact raw-input revision: `60f6935f26c912a32aac0e1aa0bb6b5dda063c9b`.
 - Lane range: L43–L70.
 - Content-validated and consumed inputs: 8 of 28 lanes.
 - Qualified but unconsumed inputs: 2 of 28 lanes.
 - This is a partial synthesis, not a completeness claim.
 - Every consumed lane below is bound only to the exact eligible Git selector
-  `c4ed36dc8394cc58a69bb553fc0d3f5e05b13ed0:<mapped artifact path>` in
-  `research/RANKING.md`; reviewed-input hashes preserve provenance only.
+  `60f6935f26c912a32aac0e1aa0bb6b5dda063c9b:<mapped artifact path>` in
+  `research/positive-claims.json`; reviewed-input hashes preserve provenance
+  only.
 
 Validated and consumed inputs: L43, L48–L49, L53–L55, L57, and L64.
 
@@ -28,9 +29,9 @@ canonical L69 evidence.
 
 | Supported statement | Inputs | Boundary |
 | --- | --- | --- |
-| SQLite, FalkorDB, and LadybugDB are documented storage candidates for a public-fixture comparison. | L43, L48–L49 | L44 cannot support a DuckDB-VSS conclusion; durability, concurrency, license, memory, and latency must be measured. |
-| A small read-only graph/search surface can use typed schemas, response-size bounds, explicit isolation controls, and an openCypher-style interface candidate. | L53–L55, L57 | The base capability inventory is incomplete; GraphQL and DuckDB-SQL surface verdicts are unknown; no engine or transport is selected. |
-| BEIR datasets and run formats can anchor a public evaluation harness. | L64 | Dataset choice, qrels, metrics, downloads, and target-system integration require a separately reproducible harness. |
+| <!-- positive-claim: SC-01 --> SQLite, FalkorDB, and LadybugDB are documented storage candidates for a public-fixture comparison. | L43, L48–L49 | L44 cannot support a DuckDB-VSS conclusion; durability, concurrency, license, memory, and latency must be measured. |
+| <!-- positive-claim: SC-02 --> A small read-only graph/search surface can use typed schemas, response-size bounds, explicit isolation controls, and an openCypher-style interface candidate. | L53–L55, L57 | The base capability inventory is incomplete; GraphQL and DuckDB-SQL surface verdicts are unknown; no engine or transport is selected. |
+| <!-- positive-claim: SC-03 --> BEIR datasets and run formats can anchor a public evaluation harness. | L64 | Dataset choice, qrels, metrics, downloads, and target-system integration require a separately reproducible harness. |
 
 ## Unsupported or unknown
 

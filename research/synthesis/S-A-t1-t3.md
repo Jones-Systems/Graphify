@@ -2,13 +2,14 @@
 
 ## Source binding
 
-- Exact raw-input revision: `c4ed36dc8394cc58a69bb553fc0d3f5e05b13ed0`.
+- Exact raw-input revision: `60f6935f26c912a32aac0e1aa0bb6b5dda063c9b`.
 - Lane range: L01–L21.
 - Content-validated and consumed inputs: 1 of 21 lanes.
 - This is a partial synthesis, not a claim that the theme or corpus is complete.
 - Every consumed lane below is bound only to the exact eligible Git selector
-  `c4ed36dc8394cc58a69bb553fc0d3f5e05b13ed0:<mapped artifact path>` in
-  `research/RANKING.md`; reviewed-input hashes preserve provenance only.
+  `60f6935f26c912a32aac0e1aa0bb6b5dda063c9b:<mapped artifact path>` in
+  `research/positive-claims.json`; reviewed-input hashes preserve provenance
+  only.
 
 Validated and consumed input: L20.
 
@@ -21,7 +22,7 @@ missing; L21 contains no completed findings.
 
 | Supported statement | Inputs | Boundary |
 | --- | --- | --- |
-| PostgreSQL full-text plus pgvector is a public-source hybrid-search candidate. | L20 | No live database, workload, backup posture, extension install, target quality gain, or deployment readiness is established. |
+| <!-- positive-claim: SA-01 --> PostgreSQL full-text plus pgvector is a public-source hybrid-search candidate. | L20 | No live database, workload, backup posture, extension install, target quality gain, or deployment readiness is established. |
 
 ## Unsupported or unknown
 
