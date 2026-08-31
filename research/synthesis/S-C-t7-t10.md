@@ -43,7 +43,5 @@ latency budgets, the L69 A/B protocol, or judge-bias mitigation.
 
 ## Synthesis conclusion
 
-The supported evidence is limited to a public-fixture storage comparison, a
-bounded read-only query-surface experiment, and a BEIR-based evaluation
-harness. Storage, routing, interface, and evaluation-policy selections remain
-open.
+- Supported: <!-- positive-claim: SC-04 --> Public-source support is limited to a public-fixture storage comparison, a bounded read-only query-surface experiment, and a BEIR-based evaluation harness.
+- Unsupported/unknown: Storage, routing, interface, and evaluation-policy selections remain open.

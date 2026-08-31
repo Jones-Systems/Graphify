@@ -47,113 +47,120 @@
       "Supported synthesis"
     ]
   },
+  "governed_conclusion_sections": {
+    "research/synthesis/S-A-t1-t3.md": "Synthesis conclusion",
+    "research/synthesis/S-B-t4-t6.md": "Synthesis conclusion",
+    "research/synthesis/S-C-t7-t10.md": "Synthesis conclusion",
+    "research/synthesis/S-D-t11-t14.md": "Synthesis conclusion",
+    "research/synthesis/S-E-t15-crosscutting.md": "Synthesis conclusion"
+  },
   "raw_consumer_files": [],
   "raw_reference_files": ["research/RANKING.md"],
   "allowlisted_lanes": {
     "L20": {
       "path": "research/raw/L20-pg17-hybrid-search.md",
       "blob_oid": "d5cf0dd412d97c2d4eeb784477d1fd0b23b5558c",
-      "claim_ids": ["EXP-01", "SA-01"]
+      "claim_ids": ["EXP-01", "SA-01", "SA-02"]
     },
     "L22": {
       "path": "research/raw/L22-splink-entity-resolution.md",
       "blob_oid": "8be724992fc0430ee1a917c093edf71d454b37a3",
-      "claim_ids": ["EXP-05", "SB-01"]
+      "claim_ids": ["EXP-05", "SB-01", "SB-04"]
     },
     "L29": {
       "path": "research/raw/L29-tree-sitter-grammars.md",
       "blob_oid": "dedb55fd61adef0c3841a452e80035cf5b37046a",
-      "claim_ids": ["EXP-03", "SB-02"]
+      "claim_ids": ["EXP-03", "SB-02", "SB-04"]
     },
     "L33": {
       "path": "research/raw/L33-joern-cpg.md",
       "blob_oid": "7a9cf26a6e699ebbc424b66cd47f66bd298d9fa4",
-      "claim_ids": ["EXP-03", "SB-02"]
+      "claim_ids": ["EXP-03", "SB-02", "SB-04"]
     },
     "L37": {
       "path": "research/raw/L37-llamacpp-server-profiles.md",
       "blob_oid": "f25cceb2e777e342c9aa1bd1dc196d45619221ee",
-      "claim_ids": ["EXP-04", "SB-03"]
+      "claim_ids": ["EXP-04", "SB-03", "SB-04"]
     },
     "L40": {
       "path": "research/raw/L40-small-model-extraction-quality.md",
       "blob_oid": "9fce793f7846b963991ce1c2f432e91cf91ff2ee",
-      "claim_ids": ["EXP-04", "SB-03"]
+      "claim_ids": ["EXP-04", "SB-03", "SB-04"]
     },
     "L42": {
       "path": "research/raw/L42-gguf-quantization-tradeoffs.md",
       "blob_oid": "2c9847d93cd3ac2e4d88c9ef2f0b6a4cb5f0c85c",
-      "claim_ids": ["EXP-04", "SB-03"]
+      "claim_ids": ["EXP-04", "SB-03", "SB-04"]
     },
     "L43": {
       "path": "research/raw/L43-sqlite-unified-store.md",
       "blob_oid": "7a09f0b98fd52dcab2c25ec78513972937ab5e74",
-      "claim_ids": ["EXP-02", "SC-01"]
+      "claim_ids": ["EXP-02", "SC-01", "SC-04"]
     },
     "L48": {
       "path": "research/raw/L48-falkordb.md",
       "blob_oid": "d260cb006c442e9a647b835f25c310bbe0725239",
-      "claim_ids": ["EXP-02", "SC-01"]
+      "claim_ids": ["EXP-02", "SC-01", "SC-04"]
     },
     "L49": {
       "path": "research/raw/L49-kuzu-embedded.md",
       "blob_oid": "40e7d74cc8a4ea5e17e4a08f62a646d7693857ff",
-      "claim_ids": ["EXP-02", "SC-01"]
+      "claim_ids": ["EXP-02", "SC-01", "SC-04"]
     },
     "L53": {
       "path": "research/raw/L53-agent-tool-schema-design.md",
       "blob_oid": "86ff720a064ad67950b022fa98ed3806df1ed26d",
-      "claim_ids": ["EXP-06", "SC-02"]
+      "claim_ids": ["EXP-06", "SC-02", "SC-04"]
     },
     "L54": {
       "path": "research/raw/L54-truncation-strategies.md",
       "blob_oid": "76c4d96cd498b7bb62c74ed779269d656fb9c6ea",
-      "claim_ids": ["EXP-06", "SC-02"]
+      "claim_ids": ["EXP-06", "SC-02", "SC-04"]
     },
     "L55": {
       "path": "research/raw/L55-mcp-auth-isolation.md",
       "blob_oid": "3384b4c6bc5335ead706f703e6d2e180c0091e68",
-      "claim_ids": ["EXP-06", "SC-02"]
+      "claim_ids": ["EXP-06", "SC-02", "SC-04"]
     },
     "L57": {
       "path": "research/raw/L57-kuzu-cypher-ergonomics.md",
       "blob_oid": "69b67429ac40a10bcddaea59e48898e3d408560a",
-      "claim_ids": ["EXP-06", "SC-02"]
+      "claim_ids": ["EXP-06", "SC-02", "SC-04"]
     },
     "L64": {
       "path": "research/raw/L64-beir-local-harness.md",
       "blob_oid": "c01f861af0c5b4def29f61ad00acfaede02e8c66",
-      "claim_ids": ["EXP-01", "SC-03"]
+      "claim_ids": ["EXP-01", "SC-03", "SC-04"]
     },
     "L72": {
       "path": "research/raw/L72-scatter-gather.md",
       "blob_oid": "9ff1915e4d703b2814261decbada1079d9d6b726",
-      "claim_ids": ["EXP-07", "SD-01"]
+      "claim_ids": ["EXP-07", "SD-01", "SD-05"]
     },
     "L78": {
       "path": "research/raw/L78-git-delta-reextraction.md",
       "blob_oid": "b27ae6ea6e08dda448767020ef16cde646669a1b",
-      "claim_ids": ["EXP-07", "SD-02"]
+      "claim_ids": ["EXP-07", "SD-02", "SD-05"]
     },
     "L79": {
       "path": "research/raw/L79-watch-vs-cron-refresh.md",
       "blob_oid": "fd25de506ccd14967cc85dd1ebffbebbab1a5a9e",
-      "claim_ids": ["EXP-07", "SD-02"]
+      "claim_ids": ["EXP-07", "SD-02", "SD-05"]
     },
     "L83": {
       "path": "research/raw/L83-refresh-scheduling.md",
       "blob_oid": "5cc3dbacc1b84ca9ead62058e222e92c05d1b2e6",
-      "claim_ids": ["EXP-07", "SD-02"]
+      "claim_ids": ["EXP-07", "SD-02", "SD-05"]
     },
     "L86": {
       "path": "research/raw/L86-traversal-depth-budgets.md",
       "blob_oid": "5a732d7216d43ec5d6fbb2c83a48c68784d2c821",
-      "claim_ids": ["EXP-08", "SD-03"]
+      "claim_ids": ["EXP-08", "SD-03", "SD-05"]
     },
     "L93": {
       "path": "research/raw/L93-frontmatter-query-engines.md",
       "blob_oid": "1b346c297ef73824d2a64f5f6c6a2958e6033056",
-      "claim_ids": ["EXP-09", "SD-04"]
+      "claim_ids": ["EXP-09", "SD-04", "SD-05"]
     }
   },
   "claims": [
@@ -228,6 +235,14 @@
       "lanes": ["L20"]
     },
     {
+      "id": "SA-02",
+      "consumer": "research/synthesis/S-A-t1-t3.md",
+      "section": "Synthesis conclusion",
+      "form": "prose",
+      "statement": "PostgreSQL full-text plus pgvector may be evaluated as a hybrid-search candidate.",
+      "lanes": ["L20"]
+    },
+    {
       "id": "SB-01",
       "consumer": "research/synthesis/S-B-t4-t6.md",
       "section": "Supported synthesis",
@@ -249,6 +264,14 @@
       "lanes": ["L37", "L40", "L42"]
     },
     {
+      "id": "SB-04",
+      "consumer": "research/synthesis/S-B-t4-t6.md",
+      "section": "Synthesis conclusion",
+      "form": "prose",
+      "statement": "Splink, structural-code extraction, and bounded batch-extraction experiments have limited public-source support.",
+      "lanes": ["L22", "L29", "L33", "L37", "L40", "L42"]
+    },
+    {
       "id": "SC-01",
       "consumer": "research/synthesis/S-C-t7-t10.md",
       "section": "Supported synthesis",
@@ -268,6 +291,14 @@
       "section": "Supported synthesis",
       "statement": "BEIR datasets and run formats can anchor a public evaluation harness.",
       "lanes": ["L64"]
+    },
+    {
+      "id": "SC-04",
+      "consumer": "research/synthesis/S-C-t7-t10.md",
+      "section": "Synthesis conclusion",
+      "form": "prose",
+      "statement": "Public-source support is limited to a public-fixture storage comparison, a bounded read-only query-surface experiment, and a BEIR-based evaluation harness.",
+      "lanes": ["L43", "L48", "L49", "L53", "L54", "L55", "L57", "L64"]
     },
     {
       "id": "SD-01",
@@ -296,6 +327,14 @@
       "section": "Supported synthesis",
       "statement": "Headless frontmatter query engines are documented candidates.",
       "lanes": ["L93"]
+    },
+    {
+      "id": "SD-05",
+      "consumer": "research/synthesis/S-D-t11-t14.md",
+      "section": "Synthesis conclusion",
+      "form": "prose",
+      "statement": "Bounded aggregation, generic refresh mechanics, token-budgeted traversal, and frontmatter-query experiments retain limited public-source support.",
+      "lanes": ["L72", "L78", "L79", "L83", "L86", "L93"]
     }
   ]
 }

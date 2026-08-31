@@ -103,8 +103,20 @@ bound to its finding ID, reviewed revision, severity, and historical effect.
 | GSR-P2-01 | `d1dbac36208b0066fc8907bd9fe9408fc5c51a60` | P2 | Corpus provenance and completeness blocker. | Public research was separated from non-research wrappers; incomplete and misrouted inputs are explicit gaps or excluded. Missing canonical content was not invented. |
 | GSR-P2-02 | `d1dbac36208b0066fc8907bd9fe9408fc5c51a60` | P2 | Reviewed-revision acceptance blocker. | L20 is limited to public evidence. L13/L19 are bound to the reviewed input and clean derivative, but their earlier origins remain unknown and they are excluded. |
 | GSR-P2-03 | `d1dbac36208b0066fc8907bd9fe9408fc5c51a60` | P2 | Research-completeness blocker. | Content classification now records 21 validated/consumed, 3 qualified/unconsumed, 46 excluded-not-public-safe, 14 gap/incomplete, 2 origin-unbound, 9 misrouted, and 5 missing lanes. |
-| GSR-P2-04 | `d1dbac36208b0066fc8907bd9fe9408fc5c51a60` | P2 | Unresolved-prior-effect blocker. | Outside this artifact set; no disposition is asserted here. |
+| GSR-P2-04 | `d1dbac36208b0066fc8907bd9fe9408fc5c51a60` | P2 | Unresolved-prior-effect blocker. | Retained residual: historical R1–R20 downstream implementations may still encode conclusions from the pre-repair mixed-context synthesis. This identity bridge does not revalidate their implementation provenance. |
 | GSR-P3-01 | `d1dbac36208b0066fc8907bd9fe9408fc5c51a60` | P3 | Candidate-validity blocker. | Known whitespace defects are repaired; verification must bind its result to the exact candidate revision. |
+
+### Retained prior-effect residual
+
+`GSR-P2-04` remains open at its original P2 severity and blocking effect. Its
+exact scope is any downstream implementation or durable implementation claim
+that relied on the historical R1–R20 synthesis before this provenance repair.
+The compatibility map below preserves stable identity only; it does not prove
+that any such consumer used only currently allowlisted evidence. This residual
+blocks a broader claim that downstream implementations are provenance-cleared.
+It does not block the bounded research-corpus allowlist, its deterministic
+checker, or this documentation-only remediation. Exact consumer-by-consumer
+provenance remediation or an authorized owner disposition remains required.
 
 Authority effect: none. No adoption, publication, activation, deployment, or
 source-currentness claim is made.

@@ -34,6 +34,5 @@ L26 are not repaired by swapping their claims in synthesis.
 
 ## Synthesis conclusion
 
-Splink, structural-code extraction, and bounded batch-extraction experiments
-have limited public-source support. No identifier-governance scheme, dependency
-extractor, SCIP pipeline, model, or deployment profile is accepted as ready.
+- Supported: <!-- positive-claim: SB-04 --> Splink, structural-code extraction, and bounded batch-extraction experiments have limited public-source support.
+- Unsupported/unknown: No identifier-governance scheme, dependency extractor, SCIP pipeline, model, or deployment profile is accepted as ready.

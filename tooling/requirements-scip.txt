@@ -18,13 +18,11 @@ verified = GitHub release-assets API `digest` field AND local sha256sum of the
            downloaded artifact agree; extracted binary reports `v0.9.0`
            (verified 2026-08-25, Debian linux x86_64).
 #
-# Install + verify in a newly allocated directory (never commit binaries):
-#   scip_cli_tmp="$(mktemp -d "${TMPDIR:-/tmp}/graphify-scip-cli.XXXXXXXX")"
-#   trap 'rm -rf -- "$scip_cli_tmp"' EXIT HUP INT TERM
-#   curl -fsSL -o "$scip_cli_tmp/scip-linux-amd64.tar.gz" "$url"
-#   echo "fc2e7273e110be9f35924da1066000183791e8bfdb0391355de6eaaa070fec75  $scip_cli_tmp/scip-linux-amd64.tar.gz" | sha256sum -c -
-#   tar xzf "$scip_cli_tmp/scip-linux-amd64.tar.gz" -C "$scip_cli_tmp" scip
-#   "$scip_cli_tmp/scip" version   # -> scip version v0.9.0
+# This file intentionally provides no executable fetch, install, extraction,
+# or launch recipe. The artifact must be supplied by the operator as immutable
+# local input and admitted only through the complete run lock in
+# docs/SCIP-PILOT.md. The release metadata above is one expected-artifact
+# identity, not a complete execution lock.
 #
 # Other platform assets on the same release (pin before first use there):
 #   darwin amd64  scip-darwin-amd64.tar.gz  39d8b16cafd6b331532d935c230c7a8f3d03d83d50fa972be3ab269f2d8267e8
@@ -36,8 +34,12 @@ verified = GitHub release-assets API `digest` field AND local sha256sum of the
 # npx, a remote Python bootstrap, or a JVM-downloading launcher.
 #
 # Before any pilot execution, the operator must supply an immutable run lock
-# containing the exact indexer package artifact, runner, Python runtime and
-# dependency lock, any JVM distribution, and this Go CLI. Each executable or
-# package artifact needs its local path, exact version, byte count, and digest;
-# the run must also record network-denial evidence and the lock-record digest.
-# Missing or mismatched evidence blocks execution. See docs/SCIP-PILOT.md.
+# containing the exact source commit; Graphify revision; executed
+# tooling/scip_convert.py and tooling/validate.py bytes; indexer package
+# artifact; runner; Python runtime and dependency closure; any JVM
+# distribution; this Go CLI; and the shell, sandbox launcher, and every other
+# control-plane binary, including their loader/library/plugin/helper runtime
+# closure. Each input needs the exact identity required by docs/SCIP-PILOT.md.
+# The lock must also bind argv, environment, sandbox/mount configuration,
+# network denial, and its own digest. Missing or mismatched evidence leaves the
+# protocol unexecutable; execution remains blocked.

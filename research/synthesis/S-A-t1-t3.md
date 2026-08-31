@@ -34,7 +34,5 @@ origin-unbound, missing, or incomplete lanes.
 
 ## Synthesis conclusion
 
-The sole supported conclusion in this range is that PostgreSQL full-text plus
-pgvector may be evaluated as a hybrid-search candidate. Retrieval architecture,
-ranking, model selection, storage choice, and any PostgreSQL deployment remain
-open.
+- Supported: <!-- positive-claim: SA-02 --> PostgreSQL full-text plus pgvector may be evaluated as a hybrid-search candidate.
+- Unsupported/unknown: Retrieval architecture, ranking, model selection, storage choice, and any PostgreSQL deployment remain open.

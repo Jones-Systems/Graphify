@@ -1,111 +1,136 @@
 # SCIP pilot protocol — public-fixture symbol edges
 
-Prove a hash-pinned `scip` CLI, an independently pinned SCIP indexer, and the
-pure-standard-library converter on one small public fixture before considering
-any broader ingestion. This document does not identify or authorize access to
-any protected repository. A prior uncommitted run report is historical context
-only: its source commit, input index, converted graph, validation inputs, and
-transcript are unavailable, so none of its reported results are acceptance
-evidence.
+This is a public-safe protocol for one small, authorized public fixture. It
+does not identify a protected repository, provide a runnable pilot, or
+authorize access, installation, execution, promotion, or deployment. A prior
+uncommitted run report is historical context only: its source commit, inputs,
+outputs, and transcript are unavailable, so none of its reported results are
+acceptance evidence.
 
-## Fail-closed toolchain gate
+## Protocol state: unexecutable
 
-The Go `scip` CLI is pinned in `tooling/requirements-scip.txt`. No executable
-Python-indexer bootstrap is committed. In particular, do not use `npx`,
-`npm install`, a remote Python bootstrap script, or a launcher that downloads a
-JVM at run time.
+This repository deliberately does not contain a complete run lock, sandbox
+configuration, installer, bootstrapper, or executable runbook. The protocol
+must remain fail-closed and unexecutable until an operator supplies and
+independently verifies every immutable input described below. Repository text,
+package names, version strings, release URLs, and a subset of digests are not a
+complete execution authorization or lock.
 
-Before any indexer execution, an operator must supply one immutable lock record
-for the run. The lock record must contain all of the following:
+No step may resolve mutable packages or download code at run time. In
+particular, a remote Python bootstrap, `npx`, `npm install`, a registry-resolved
+package, or a launcher that downloads a JVM is prohibited.
 
-- exact package name and version for the SCIP indexer;
-- local package artifact path, byte count, and cryptographic digest;
-- exact runner path, version output, byte count, and cryptographic digest;
-- exact Python runtime path/version/digest and an immutable dependency lock;
-- exact JVM distribution/version/path/digest when the runner can invoke Java;
-- the pinned Go `scip` path/version/digest;
-- the network-denial mechanism used while indexing; and
-- the digest of the lock record itself in the run evidence.
+## Immutable execution gate
 
-Every digest must identify the exact local bytes that will execute. Missing,
-mutable, registry-resolved, or mismatched evidence blocks the run. The runner
-must be invoked by its verified absolute path in a network-denied sandbox; an
-auto-downloading launcher is not an acceptable substitute. This repository
-intentionally provides no fallback install or bootstrap command.
+Before any pilot process starts, one immutable, operator-supplied run lock must
+bind all of the following:
 
-## Source binding and isolated copy
+- the authorized public-fixture repository identity and one exact full source
+  commit, with the expected tree identity;
+- the exact Graphify tool revision and the exact blob identity, byte count, and
+  cryptographic digest of the executed `tooling/scip_convert.py` and
+  `tooling/validate.py` bytes;
+- the SCIP indexer package name and version plus the local package artifact's
+  path, byte count, and cryptographic digest;
+- the exact indexer runner path, version output, byte count, and cryptographic
+  digest;
+- the Python executable and immutable runtime/dependency closure, including
+  exact versions, local paths, byte counts, and cryptographic digests;
+- the exact JVM distribution, version, path, byte count, and cryptographic
+  digest when any runner can invoke Java;
+- the Go `scip` CLI path, version, byte count, and cryptographic digest;
+- the shell and every control-plane binary used for source resolution,
+  temporary-directory allocation, tree inspection, archive creation and
+  validation, extraction, filesystem inspection, hashing, permission changes,
+  sandbox launch, and cleanup, each with an exact absolute path, version or
+  immutable build identity, byte count, and cryptographic digest;
+- the dynamic loader, shared libraries, plugins, helper scripts, and executable
+  runtime closure reachable by every process above, with exact local identity,
+  byte count, and cryptographic digest;
+- the exact argv and bounded environment for every process;
+- the sandbox implementation, immutable configuration, mount plan, network
+  denial, and their evidence format; and
+- a cryptographic digest over the canonical run-lock record itself.
 
-Use a public fixture that the operator is authorized to read. Bind the run to
-an explicit full commit ID and create a new private temporary directory. Never
-archive `HEAD`, reuse a pre-existing destination, or index the source checkout.
+The executed converter and validator must come from the exact locked Graphify
+revision, not from a working tree or an unbound copy. The operator must verify
+every locked path and digest immediately before use. Any omitted executable or
+script, mutable resolution, unexpected helper, path mismatch, digest mismatch,
+or environment variance blocks the run. Only after the complete gate passes
+may the run record assert that every executable byte was immutably bound.
 
-```bash
-set -eu
+## Exact source binding and isolated copy
 
-: "${PILOT_SOURCE_REPO:?set an authorized public-fixture checkout}"
-: "${PILOT_SOURCE_COMMIT:?set the exact 40-hex commit}"
+The operator-owned runbook must implement these conditions without weakening
+them:
 
-case "$PILOT_SOURCE_COMMIT" in
-  [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
-  *) echo "PILOT_SOURCE_COMMIT must be a full lowercase commit ID" >&2; exit 2 ;;
-esac
+1. Resolve the supplied full source commit as a commit and require exact
+   equality with the lock. Never resolve or archive `HEAD`, a branch, a tag, or
+   another mutable selector.
+2. Inspect the locked tree before archiving. Reject every Git symlink entry
+   (mode `120000`) and every gitlink/submodule entry (mode `160000`).
+3. Allocate a new private run root with the locked `mktemp -d` implementation.
+   Install a cleanup trap through the locked shell before creating run
+   material. The trap may remove only that newly returned run root; an
+   operator-selected or pre-existing cleanup path is never accepted.
+4. Create the fixture destination beneath that run root and prove it is an
+   empty destination owned by this run. Never reuse a pre-existing path, even
+   when it appears empty.
+5. Create an archive from the exact resolved commit with the locked archive
+   tool. Before extraction, reject absolute or traversal paths, symlinks, hard
+   links, devices, FIFOs, sockets, gitlinks, and every other non-regular entry.
+6. Extract only through the locked extractor into the new empty destination.
+   After extraction, reject every symlink and non-regular entry, prove every
+   resolved path remains beneath the run root, and verify the extracted tree
+   against the locked source tree identity. An empty fixture also fails.
 
-resolved_commit="$(git -C "$PILOT_SOURCE_REPO" rev-parse --verify \
-  "$PILOT_SOURCE_COMMIT^{commit}")"
-[ "$resolved_commit" = "$PILOT_SOURCE_COMMIT" ] || {
-  echo "source commit did not resolve exactly" >&2
-  exit 2
-}
+Fixture preparation, if an indexer requires static package metadata, is
+limited to a deterministic patch inside the isolated copy. Record its exact
+bytes and digest in the run evidence. The preparation must not read the source
+checkout after archive creation. This public protocol intentionally does not
+prescribe source-package names, modules, tests, symbols, descriptors, or corpus
+statistics.
 
-PILOT_RUN_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/graphify-scip-pilot.XXXXXXXX")"
-cleanup() {
-  chmod -R u+w -- "$PILOT_RUN_ROOT" 2>/dev/null || true
-  rm -rf -- "$PILOT_RUN_ROOT"
-}
-trap cleanup EXIT HUP INT TERM
+## Credential-free filesystem containment
 
-PILOT_COPY="$PILOT_RUN_ROOT/repo"
-mkdir -m 700 -- "$PILOT_COPY"
-[ -z "$(find "$PILOT_COPY" -mindepth 1 -print -quit)" ] || {
-  echo "pilot destination is not empty" >&2
-  exit 2
-}
+Before the indexer starts, place the verified tool bundle and isolated fixture
+inside a fresh credential-free filesystem sandbox with its own mount and user
+isolation, or an independently demonstrated equivalent boundary. Network
+denial alone is insufficient.
 
-git -C "$PILOT_SOURCE_REPO" archive --format=tar "$resolved_commit" |
-  tar -xf - -C "$PILOT_COPY"
-[ -n "$(find "$PILOT_COPY" -mindepth 1 -print -quit)" ] || {
-  echo "pilot archive produced an empty fixture" >&2
-  exit 2
-}
-readonly PILOT_RUN_ROOT PILOT_COPY resolved_commit
-```
+The sandbox must have no host, home, or protected-repository mounts. It may see
+only the locked tool bundle as read-only input and a new run root provisioned
+inside its own ephemeral filesystem as bounded scratch space; that run root
+must not be a host bind mount. Supply an empty isolated home and temporary
+directory. Remove credentials and authentication variables, and expose no
+SSH/GPG agents, credential stores, cloud configuration, container-engine
+sockets, host runtime sockets, or unrelated filesystem trees. The operator
+must record the sandbox configuration digest and a mount table from inside the
+boundary before indexing. Any unexpected mount, credential, socket,
+environment entry, or ability to resolve a host/protected path blocks
+execution.
 
-The trap owns only the newly allocated `mktemp` directory. The protocol never
-accepts an operator-selected cleanup target.
-
-## Copy-only fixture preparation
-
-If the selected indexer requires static package metadata, make the minimum
-change inside `PILOT_COPY` only and record the patch in the run evidence. Do not
-prescribe source-package names, modules, test paths, or symbol descriptors in
-this public protocol. The fixture preparation must be deterministic and must
-not read from the source checkout after the archive is created.
+Network access must be denied for indexing, conversion, and validation. The
+recorded denial mechanism and an independent negative connectivity check are
+evidence requirements, not substitutes for filesystem containment.
 
 ## Index, convert, and validate
 
-Indexing remains blocked until the fail-closed toolchain gate above is
-satisfied. The operator-owned runbook must record the exact argv and environment
-for the verified runner; this document deliberately does not provide a package
-manager or launcher command.
+After all gates pass, an operator-owned runbook may invoke only lock-bound
+absolute paths and exact argv. It must:
 
-After the network-denied indexer produces `index.scip` inside `PILOT_COPY`:
-
-1. verify the pinned Go `scip` binary digest again and record `scip version`;
-2. dump `index.scip` to JSON inside `PILOT_RUN_ROOT`;
-3. run `tooling/scip_convert.py` with `--root "$PILOT_COPY"`;
-4. run `tooling/validate.py` against `PILOT_COPY`; and
-5. preserve the source commit, lock-record digest, exact argv, input/output
-   digests, validation output, and resource measurements as one run record.
+1. run the verified indexer against only the isolated fixture;
+2. place `index.scip` inside the run root;
+3. verify the locked Go `scip` bytes again, record its version, and render the
+   index to JSON inside the run root;
+4. verify and run the locked `tooling/scip_convert.py` bytes with the isolated
+   fixture as the declared root;
+5. verify and run the locked `tooling/validate.py` bytes against that same
+   fixture; and
+6. preserve the source commit and tree identity, Graphify revision, complete
+   run-lock digest, sandbox and mount evidence, exact argv and environment,
+   input/output digests, validation output, and resource measurements as one
+   run record.
 
 No output filename, symbol count, graph fingerprint, module name, test name,
 descriptor shape, or coupling statistic from a protected corpus belongs in
@@ -113,29 +138,32 @@ this protocol.
 
 ## Converter acceptance
 
-Before a fixture run, exercise the converter with a generated public synthetic
-index that covers definitions, references, relationships, self-reference
-filtering, and local-symbol filtering. Require byte-identical output from file
-and standard-input paths and require `tooling/validate.py` to pass. Synthetic
-success proves converter mechanics only; it does not validate an indexer,
-fixture, deployment profile, or broader corpus.
+Before a public-fixture run, a separately lock-bound check may exercise the
+converter with a generated public synthetic index covering definitions,
+references, relationships, self-reference filtering, and local-symbol
+filtering. Require byte-identical output from file and standard-input paths and
+require the locked validator to pass. Synthetic success proves converter
+mechanics only; it does not validate an indexer, fixture, deployment profile,
+or broader corpus.
 
 ## Success criteria
 
-Extension beyond the one public fixture is out of scope unless every criterion
-below is recorded for a fresh, independently reviewable run:
+Extension beyond the one public fixture remains out of scope unless a fresh,
+independently reviewable run records all of the following:
 
-1. the source commit and every executable byte are immutably bound as specified
-   by the lock gate;
-2. indexing runs with network access denied and no package/JVM bootstrap;
-3. validation has no new fatal class, with warnings recorded rather than
+1. the complete immutable execution gate passed with no omitted process or
+   executable input;
+2. the exact source commit, symlink-free fixture, isolated empty destination,
+   credential-free sandbox, mount boundary, and network denial were verified;
+3. validation had no new fatal class, with warnings recorded rather than
    silently accepted;
-4. repeated conversion of the same index is byte-identical;
-5. edge growth stays below an operator-declared bound established from public
+4. repeated conversion of the same locked index was byte-identical;
+5. edge growth stayed below an operator-declared bound established from public
    fixture evidence;
-6. peak memory, latency, and throughput are measured on the deployment target
-   with the exact concurrency/thread/context parameters recorded; and
-7. symbol-alias behavior is either normalized or explicitly bounded by a
+6. peak memory, latency, and throughput were measured on the deployment target
+   with the exact concurrency, thread, context, and measurement-boundary
+   parameters recorded; and
+7. symbol-alias behavior was either normalized or explicitly bounded by a
    public-fixture baseline.
 
 Authority effect: none. This protocol does not authorize installation,

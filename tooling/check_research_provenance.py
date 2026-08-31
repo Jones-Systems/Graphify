@@ -19,6 +19,7 @@ MANIFEST_PATH = ROOT / "research" / "positive-claims.json"
 RANKING_PATH = ROOT / "research" / "RANKING.md"
 RAW_ROOT = ROOT / "research" / "raw"
 CHECKER_PATH = Path(__file__).resolve()
+HISTORICAL_RANKING_REVISION = "e1c8b4395d135b4dad3bbbbcaef6571f5425db5f"
 
 FULL_OID_RE = re.compile(r"[0-9a-f]{40}")
 LANE_RE = re.compile(r"L(100|0?[1-9]|[1-9][0-9])")
@@ -27,13 +28,100 @@ LANE_RANGE_RE = re.compile(
     r"(?:\s*[–-]\s*L?(100|0?[1-9]|[1-9][0-9]))?\b"
 )
 MARKER_RE = re.compile(r"<!--\s*positive-claim:\s*([A-Z0-9-]+)\s*-->")
-SOURCE_CODE_REFERENCE_RE = re.compile(
-    r"research/(?:raw(?:/|\b)|positive-claims\.json\b)"
+NORMALIZED_RAW_REFERENCE_RE = re.compile(
+    r"(?i)(?:^|[^A-Za-z0-9_-])research"
+    r"(?:[\\/]+(?:\.{1,2}|research))*[\\/]+raw(?:[\\/]|\b)"
+)
+RAW_LANE_REFERENCE_RE = re.compile(
+    r"(?i)(?:^|[^A-Za-z0-9_-])(?:research[\\/]+)?raw[\\/]+"
+    r"L(100|0?[1-9]|[1-9][0-9])(?:[-.\\/]|\b)"
+)
+CONSTRUCTED_RAW_REFERENCE_RE = re.compile(
+    r'''(?is)(?:
+        \b(?:Path|PurePath)\(\s*["']research["']\s*\)
+            \s*/\s*["']raw["']
+      | \b(?:Path|PurePath)\s*\([^\n)]{0,160}["']research["']
+            \s*,\s*["']raw["']
+      | \b(?:join|joinpath)\s*\([^\n)]{0,160}["']research["']
+            \s*,\s*["']raw["']
+      | ["']research["']\s*/\s*["']raw["']
+      | ["']research["']\s*,\s*["']raw["']
+      | ["']research["']\s*\+\s*["'][\\/]["']
+            \s*\+\s*["']raw["']
+      | ["']research["']\s*\+\s*["'][\\/]raw["']
+    )''',
+    re.VERBOSE,
+)
+CLAIM_MAP_REFERENCE_RE = re.compile(
+    r'''(?is)(?:
+        research[\\/]+positive-claims\.json
+      | ["']research["']\s*/\s*["']positive-claims\.json["']
+      | \b(?:join|joinpath)\s*\([^\n)]{0,160}["']research["']
+            \s*,\s*["']positive-claims\.json["']
+    )''',
+    re.VERBOSE,
+)
+NEGATIVE_BOUNDARY_RE = re.compile(
+    r"\b(?:no|not|unknown|open|unsupported|unvalidated|unavailable|"
+    r"unaccepted|remain|remains|requires?|cannot|none)\b",
+    re.IGNORECASE,
 )
 RESERVED_POSITIVE_SECTIONS = {
     "Evidence-bound experiment order",
     "Positive claims",
     "Supported synthesis",
+    "Synthesis conclusion",
+}
+NARRATIVE_SUFFIXES = {".md", ".rst", ".adoc"}
+
+HISTORICAL_COMPATIBILITY: dict[int, tuple[str, str]] = {
+    1: ("Stable federated node identity", "Stable federated node identity"),
+    2: ("SCIP→KG symbol edges", "SCIP-to-KG symbol edges"),
+    3: ("Hybrid retrieval backbone", "Hybrid retrieval backbone"),
+    4: (
+        "Retrieval eval harness + promotion gate",
+        "Retrieval evaluation harness and promotion gate",
+    ),
+    5: ("Unified per-corpus SQLite store", "Unified per-corpus SQLite store"),
+    6: ("Consolidated read-only MCP server", "Consolidated read-only MCP server"),
+    7: (
+        "Splink Fellegi-Sunter ER backbone",
+        "Splink entity-resolution backbone",
+    ),
+    8: (
+        "Content-addressed incremental refresh",
+        "Content-addressed incremental refresh",
+    ),
+    9: ("Cross-corpus RRF scatter-gather", "Cross-corpus RRF scatter-gather"),
+    10: (
+        "Token-budget-ledger context packing",
+        "Token-budget-ledger context packing",
+    ),
+    11: (
+        "Entity identity governance package",
+        "Entity-identity governance package",
+    ),
+    12: ("Offline embedding model", "Offline embedding model"),
+    13: ("Parquet snapshots + SQL surface", "Parquet snapshots and SQL surface"),
+    14: ("Recall-first blocking engine", "Recall-first blocking engine"),
+    15: (
+        "ER evaluation + promotion gates without ground truth",
+        "Entity-resolution evaluation and promotion gates",
+    ),
+    16: (
+        "SQLite freshness/validation ledger",
+        "SQLite freshness and validation ledger",
+    ),
+    17: (
+        "Layered output/truncation contract",
+        "Layered output and truncation contract",
+    ),
+    18: (
+        "Shared-server auth/isolation",
+        "Shared-server authentication and isolation",
+    ),
+    19: ("Federate-don't-merge posture", "Federate-don't-merge posture"),
+    20: ("HTTP-cache freshness envelope", "HTTP-cache freshness envelope"),
 }
 
 PARTITIONS = {
@@ -83,6 +171,53 @@ def git(*args: str, binary: bool = False) -> str | bytes:
     return stdout if binary else stdout.strip()
 
 
+def tracked_text_files() -> list[tuple[str, Path, str]]:
+    files: list[tuple[str, Path, str]] = []
+    listing = git("ls-files")
+    require(isinstance(listing, str), "git file listing was not text")
+    for relative in listing.splitlines():
+        path = ROOT / relative
+        if not path.exists() and not path.is_symlink():
+            continue
+        if path.is_symlink():
+            data = str(path.readlink()).encode("utf-8")
+        elif path.is_file():
+            data = path.read_bytes()
+        else:
+            continue
+        if b"\0" in data:
+            continue
+        try:
+            value = data.decode("utf-8", "strict")
+        except UnicodeDecodeError:
+            continue
+        files.append((relative, path, value))
+    return files
+
+
+def contains_raw_source_reference(value: str) -> bool:
+    return bool(
+        NORMALIZED_RAW_REFERENCE_RE.search(value)
+        or RAW_LANE_REFERENCE_RE.search(value)
+        or CONSTRUCTED_RAW_REFERENCE_RE.search(value)
+    )
+
+
+def literal_raw_lane_refs(value: str) -> set[str]:
+    return {
+        canonical_lane(int(match.group(1)))
+        for match in RAW_LANE_REFERENCE_RE.finditer(value)
+    }
+
+
+def contains_claim_map_reference(value: str) -> bool:
+    return CLAIM_MAP_REFERENCE_RE.search(value) is not None
+
+
+def raw_reference_role(path: Path) -> str:
+    return "reference" if path.suffix.lower() in NARRATIVE_SUFFIXES else "consumer"
+
+
 def canonical_lane(number: int) -> str:
     require(1 <= number <= 100, f"lane number out of range: {number}")
     return f"L{number:02d}" if number < 100 else "L100"
@@ -127,6 +262,145 @@ def is_separator_row(cells: list[str]) -> bool:
     )
 
 
+def validate_governed_conclusion(
+    relative: str,
+    text: str,
+    section_name: str,
+    claims: dict[str, dict[str, Any]],
+) -> None:
+    body: list[tuple[int, str]] = []
+    in_section = False
+    heading_count = 0
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        heading = re.match(r"^## (.+)$", line)
+        if heading:
+            current = heading.group(1).strip()
+            in_section = current == section_name
+            if in_section:
+                heading_count += 1
+            continue
+        if in_section:
+            body.append((line_number, line))
+
+    require(heading_count == 1,
+            f"{relative} must contain exactly one {section_name!r} section")
+    expected_claims = {
+        claim_id
+        for claim_id, claim in claims.items()
+        if claim["consumer"] == relative
+        and claim["section"] == section_name
+        and claim.get("form", "table_row") == "prose"
+    }
+    observed_claims: set[str] = set()
+    supported_lines = 0
+    boundary_lines = 0
+    supported_none = False
+    for line_number, line in body:
+        if not line.strip():
+            continue
+        if line == "- Supported: none.":
+            supported_lines += 1
+            supported_none = True
+            continue
+        if line.startswith("- Supported: "):
+            supported_lines += 1
+            markers = MARKER_RE.findall(line)
+            require(len(markers) == 1,
+                    f"{relative}:{line_number} supported conclusion must have "
+                    "one registered claim marker")
+            claim_id = markers[0]
+            require(claim_id in claims,
+                    f"{relative}:{line_number} has unknown claim {claim_id}")
+            claim = claims[claim_id]
+            require(claim.get("form") == "prose",
+                    f"{claim_id} conclusion claim is not form=prose")
+            require(claim["consumer"] == relative,
+                    f"{claim_id} conclusion consumer differs")
+            require(claim["section"] == section_name,
+                    f"{claim_id} conclusion section differs")
+            statement = strip_marker(line.removeprefix("- Supported: "))
+            require(statement == claim["statement"],
+                    f"{claim_id} conclusion statement differs from claim map")
+            observed_claims.add(claim_id)
+            continue
+        if line.startswith("- Unsupported/unknown: "):
+            boundary_lines += 1
+            require(MARKER_RE.search(line) is None,
+                    f"{relative}:{line_number} boundary carries a claim marker")
+            boundary = line.removeprefix("- Unsupported/unknown: ")
+            require(NEGATIVE_BOUNDARY_RE.search(boundary) is not None,
+                    f"{relative}:{line_number} boundary lacks negative or "
+                    "unknown semantics")
+            continue
+        raise CheckFailure(
+            f"{relative}:{line_number} ungoverned conclusion prose: {line!r}"
+        )
+
+    require(supported_lines == 1,
+            f"{relative} conclusion must have exactly one Supported line")
+    require(boundary_lines >= 1,
+            f"{relative} conclusion must retain an Unsupported/unknown boundary")
+    require(not (supported_none and observed_claims),
+            f"{relative} conclusion mixes Supported:none with positive claims")
+    require(observed_claims == expected_claims,
+            f"{relative} conclusion claims differ: "
+            f"missing={sorted(expected_claims - observed_claims)} "
+            f"extra={sorted(observed_claims - expected_claims)}")
+
+
+def validate_scip_contract(pilot: str, requirements: str) -> None:
+    for required in (
+        "Protocol state: unexecutable",
+        "exact Graphify tool revision",
+        "tooling/scip_convert.py",
+        "tooling/validate.py",
+        "shell and every control-plane binary",
+        "dynamic loader, shared libraries, plugins, helper scripts",
+        "mode `120000`",
+        "mode `160000`",
+        "locked `mktemp -d`",
+        "cleanup trap",
+        "empty destination",
+        "reject every symlink",
+        "credential-free filesystem sandbox",
+        "no host, home, or protected-repository mounts",
+        "must not be a host bind mount",
+        "mount table",
+        "Network access must be denied",
+        "Authority effect: none",
+    ):
+        require(required in pilot, f"SCIP protocol lacks required gate: {required}")
+    normalized_requirements = re.sub(r"\n#[ \t]?", " ", requirements)
+    require("leaves the protocol unexecutable" in normalized_requirements,
+            "SCIP requirements do not fail closed on an incomplete run lock")
+
+    combined = pilot + "\n" + requirements
+    prohibited = {
+        "absolute home path": r"/home/[^\s`]+",
+        "unbound archive": r"archive\s+HEAD\b",
+        "remote Python bootstrap": r"get-pip\.py",
+        "executable npx resolution": r"\bnpx\s+(?:-y|--yes)\b",
+        "executable npm install": r"^[ \t]*(?:\$[ \t]+)?npm[ \t]+(?:install|exec)\b",
+        "executable Python install": r"^[ \t]*(?:\$[ \t]+)?(?:python\S*\s+-m\s+)?pip\s+install\b",
+        "network fetch recipe": r"^[ \t]*(?:\$[ \t]+)?(?:curl|wget)\s+",
+        "predictable SCIP temp path": r"/tmp/scip(?:-|/)",
+        "runnable shell block": r"```(?:ba|z)?sh\b",
+        "recorded result table": r"^## Recorded pilot results",
+        "embedded graph counts": r"\b(?:nodes|links)\s*=\s*\d+",
+    }
+    for label, pattern in prohibited.items():
+        require(re.search(pattern, combined, re.MULTILINE) is None,
+                f"SCIP protocol contains {label}")
+
+
+def expect_failure(operation: Callable[[], None], label: str) -> None:
+    try:
+        operation()
+    except CheckFailure:
+        return
+    raise CheckFailure(f"adversarial case did not fail closed: {label}")
+
+
 def load_manifest() -> tuple[dict[str, Any], str]:
     raw = MANIFEST_PATH.read_bytes()
     try:
@@ -147,6 +421,16 @@ def load_manifest() -> tuple[dict[str, Any], str]:
     ], "claim map self-test invocation differs")
     require(validator.get("group_ids") == GROUP_IDS,
             "claim map affected-check group IDs differ")
+    governed = manifest.get("governed_conclusion_sections", {})
+    expected_consumers = {relative for relative, _, _ in PARTITIONS.values()}
+    require(set(governed) == expected_consumers,
+            "governed conclusion consumers differ from synthesis partitions")
+    require(set(governed.values()) == {"Synthesis conclusion"},
+            "every governed conclusion must use the Synthesis conclusion heading")
+    for field in ("raw_consumer_files", "raw_reference_files"):
+        values = manifest.get(field)
+        require(isinstance(values, list) and len(values) == len(set(values)),
+                f"{field} must be a unique path list")
     return manifest, hashlib.sha256(raw).hexdigest()
 
 
@@ -280,6 +564,14 @@ def claims_by_id(manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:
         require(re.fullmatch(r"(?:EXP|S[A-E])-\d{2}", claim_id) is not None,
                 f"invalid claim ID: {claim_id}")
         require(claim_id not in claims, f"duplicate claim ID: {claim_id}")
+        require(claim.get("form", "table_row") in {"table_row", "prose"},
+                f"{claim_id} has an unsupported form")
+        require(isinstance(claim.get("statement"), str) and claim["statement"],
+                f"{claim_id} has no statement")
+        require(isinstance(claim.get("consumer"), str),
+                f"{claim_id} has no consumer")
+        require(isinstance(claim.get("section"), str),
+                f"{claim_id} has no section")
         claims[claim_id] = claim
     return claims
 
@@ -309,6 +601,9 @@ def check_allowlist(manifest: dict[str, Any], rows: dict[str, dict[str, str]]) -
         path: set(sections)
         for path, sections in manifest["positive_sections"].items()
     }
+    governed_conclusions: dict[str, str] = manifest[
+        "governed_conclusion_sections"
+    ]
     for path in ROOT.rglob("*.md"):
         if ".git" in path.parts:
             continue
@@ -321,8 +616,12 @@ def check_allowlist(manifest: dict[str, Any], rows: dict[str, dict[str, str]]) -
             if heading:
                 section = heading.group(1).strip()
                 if section in RESERVED_POSITIVE_SECTIONS:
+                    registered = (
+                        section in positive_sections.get(relative, set())
+                        or governed_conclusions.get(relative) == section
+                    )
                     require(
-                        section in positive_sections.get(relative, set()),
+                        registered,
                         f"{relative}:{line_number} has an unregistered "
                         f"positive section {section!r}",
                     )
@@ -340,17 +639,26 @@ def check_allowlist(manifest: dict[str, Any], rows: dict[str, dict[str, str]]) -
             require(section == claim["section"],
                     f"{claim_id} appears in section {section!r}, "
                     f"expected {claim['section']!r}")
-            cells = markdown_cells(line)
-            if relative == "research/RANKING.md":
-                statement_column, lane_column = 1, 2
+            form = claim.get("form", "table_row")
+            if form == "prose":
+                require(line.startswith("- Supported: "),
+                        f"{relative}:{line_number} prose claim is outside the "
+                        "governed Supported conclusion form")
+                statement = strip_marker(line.removeprefix("- Supported: "))
+                require(statement == claim["statement"],
+                        f"{claim_id} statement differs from claim map")
             else:
-                statement_column, lane_column = 0, 1
-            require(len(cells) > lane_column,
-                    f"{relative}:{line_number} claim row is too short")
-            require(strip_marker(cells[statement_column]) == claim["statement"],
-                    f"{claim_id} statement differs from claim map")
-            require(parse_lane_refs(cells[lane_column]) == claim["lanes"],
-                    f"{claim_id} lane list differs from claim map")
+                cells = markdown_cells(line)
+                if relative == "research/RANKING.md":
+                    statement_column, lane_column = 1, 2
+                else:
+                    statement_column, lane_column = 0, 1
+                require(len(cells) > lane_column,
+                        f"{relative}:{line_number} claim row is too short")
+                require(strip_marker(cells[statement_column]) == claim["statement"],
+                        f"{claim_id} statement differs from claim map")
+                require(parse_lane_refs(cells[lane_column]) == claim["lanes"],
+                        f"{claim_id} lane list differs from claim map")
             found[claim_id] += 1
 
     require(set(found) == set(claims),
@@ -364,17 +672,34 @@ def check_allowlist(manifest: dict[str, Any], rows: dict[str, dict[str, str]]) -
         require(path.is_file(), f"positive consumer missing: {relative}")
         section: str | None = None
         seen_sections: set[str] = set()
+        negative_prose_open = False
         for line_number, line in enumerate(
             path.read_text(encoding="utf-8").splitlines(), start=1
         ):
             heading = re.match(r"^## (.+)$", line)
             if heading:
+                negative_prose_open = False
                 section = heading.group(1).strip()
                 if section in sections:
                     seen_sections.add(section)
                 continue
-            if section not in sections or not line.startswith("|"):
+            if section not in sections:
                 continue
+            if not line.strip():
+                negative_prose_open = False
+                continue
+            if not line.startswith("|"):
+                require(MARKER_RE.search(line) is None,
+                        f"{relative}:{line_number} positive-section prose "
+                        "cannot carry a table-row claim marker")
+                if not negative_prose_open:
+                    require(NEGATIVE_BOUNDARY_RE.search(line) is not None,
+                            f"{relative}:{line_number} unmarked "
+                            "positive-section prose is not an explicit "
+                            "negative boundary")
+                    negative_prose_open = True
+                continue
+            negative_prose_open = False
             cells = markdown_cells(line)
             if is_separator_row(cells):
                 continue
@@ -386,34 +711,53 @@ def check_allowlist(manifest: dict[str, Any], rows: dict[str, dict[str, str]]) -
                 f"{relative} positive sections differ: "
                 f"missing={sorted(sections - seen_sections)}")
 
+    for relative, section_name in governed_conclusions.items():
+        validate_governed_conclusion(
+            relative,
+            (ROOT / relative).read_text(encoding="utf-8"),
+            section_name,
+            claims,
+        )
+
     approved_raw_consumers = set(manifest["raw_consumer_files"])
-    code_suffixes = {".py", ".sh", ".js", ".mjs", ".cjs", ".ts", ".tsx"}
+    approved_raw_references = set(manifest["raw_reference_files"])
     observed_raw_consumers: set[str] = set()
-    for path in ROOT.rglob("*"):
-        if not path.is_file() or ".git" in path.parts or path.suffix not in code_suffixes:
+    observed_raw_references: set[str] = set()
+    consumer_text: dict[str, str] = {}
+    for relative, path, text in tracked_text_files():
+        if relative in {
+            CHECKER_PATH.relative_to(ROOT).as_posix(),
+            MANIFEST_PATH.relative_to(ROOT).as_posix(),
+        } or RAW_ROOT in path.parents:
             continue
-        if path.resolve() == CHECKER_PATH or RAW_ROOT in path.parents:
+        if not contains_raw_source_reference(text):
             continue
-        text = path.read_text(encoding="utf-8", errors="replace")
-        if SOURCE_CODE_REFERENCE_RE.search(text):
-            observed_raw_consumers.add(path.relative_to(ROOT).as_posix())
+        if raw_reference_role(path) == "reference":
+            observed_raw_references.add(relative)
+        else:
+            observed_raw_consumers.add(relative)
+            consumer_text[relative] = text
+
     require(observed_raw_consumers == approved_raw_consumers,
             f"raw consumer allowlist differs: observed={sorted(observed_raw_consumers)} "
             f"approved={sorted(approved_raw_consumers)}")
-
-    observed_raw_references: set[str] = set()
-    for path in ROOT.rglob("*.md"):
-        if ".git" in path.parts or RAW_ROOT in path.parents:
-            continue
-        text = path.read_text(encoding="utf-8", errors="replace")
-        if "research/raw/" in text:
-            observed_raw_references.add(path.relative_to(ROOT).as_posix())
-    approved_raw_references = set(manifest["raw_reference_files"])
     require(observed_raw_references == approved_raw_references,
-            f"raw Markdown reference allowlist differs: "
+            f"raw narrative reference allowlist differs: "
             f"observed={sorted(observed_raw_references)} "
             f"approved={sorted(approved_raw_references)}")
-    return f"claims={len(claims)} lanes={len(allowlisted)} raw_consumers=0"
+
+    for relative, text in consumer_text.items():
+        require(contains_claim_map_reference(text),
+                f"{relative} reads raw research without positive-claims.json")
+        literal_lanes = literal_raw_lane_refs(text)
+        require(literal_lanes.issubset(allowlisted),
+                f"{relative} names non-allowlisted raw lanes: "
+                f"{sorted(literal_lanes - set(allowlisted))}")
+    return (
+        f"claims={len(claims)} lanes={len(allowlisted)} "
+        f"raw_consumers={len(observed_raw_consumers)} "
+        f"raw_references={len(observed_raw_references)}"
+    )
 
 
 def check_citations(manifest: dict[str, Any]) -> str:
@@ -503,14 +847,37 @@ def check_partition(manifest: dict[str, Any], rows: dict[str, dict[str, str]]) -
 def check_compatibility(_: dict[str, Any], __: dict[str, dict[str, str]]) -> str:
     text = RANKING_PATH.read_text(encoding="utf-8")
     require(
-        "e1c8b4395d135b4dad3bbbbcaef6571f5425db5f:research/RANKING.md" in text,
+        f"{HISTORICAL_RANKING_REVISION}:research/RANKING.md" in text,
         "historical recommendation definition is not immutable-bound",
     )
+
+    historical_text = git(
+        "show", f"{HISTORICAL_RANKING_REVISION}:research/RANKING.md"
+    )
+    require(isinstance(historical_text, str), "historical ranking was not text")
+    historical_labels: dict[int, str] = {}
+    for line in historical_text.splitlines():
+        if not re.match(r"^\|(?:[1-9]|1[0-9]|20)\|", line):
+            continue
+        match = re.match(
+            r"^\|((?:[1-9]|1[0-9]|20))\|([^|\n]+?) — ", line
+        )
+        require(match is not None,
+                "historical ranking row lacks a stable recommendation prefix")
+        number = int(match.group(1))
+        require(number not in historical_labels,
+                f"duplicate historical ranking R{number}")
+        historical_labels[number] = match.group(2)
+    require(set(historical_labels) == set(range(1, 21)),
+            "immutable historical ranking does not define exactly R1-R20")
+
     mapped: dict[int, str] = {}
     for line in text.splitlines():
         if not re.match(r"^\| R(?:[1-9]|1[0-9]|20) \|", line):
             continue
         cells = markdown_cells(line)
+        require(len(cells) == 3,
+                f"historical compatibility row has {len(cells)} cells")
         number = int(cells[0][1:])
         require(number not in mapped, f"duplicate historical R{number}")
         require(cells[2] == "`historical_identity_only`",
@@ -519,26 +886,47 @@ def check_compatibility(_: dict[str, Any], __: dict[str, dict[str, str]]) -> str
     require(set(mapped) == set(range(1, 21)),
             f"historical recommendation map differs: {sorted(mapped)}")
 
+    for number, (historical_label, stable_label) in HISTORICAL_COMPATIBILITY.items():
+        require(historical_labels[number] == historical_label,
+                f"R{number} immutable historical label changed: "
+                f"{historical_labels[number]!r}")
+        require(mapped[number] == stable_label,
+                f"R{number} stable label does not match its immutable "
+                f"historical definition: {mapped[number]!r}")
+
+    require("`GSR-P2-04` remains open at its original P2 severity" in text,
+            "GSR-P2-04 is not retained as an open P2 residual")
+    require(
+        "blocks a broader claim that downstream implementations are "
+        "provenance-cleared" in text,
+        "GSR-P2-04 blocking effect is not explicit",
+    )
+    require(
+        "Exact consumer-by-consumer\nprovenance remediation or an authorized "
+        "owner disposition remains required" in text,
+        "GSR-P2-04 required disposition is not explicit",
+    )
+    require("Outside this artifact set; no disposition is asserted here." not in text,
+            "GSR-P2-04 retains an undisposed placeholder")
+
     referenced: set[int] = set()
-    text_suffixes = {".md", ".py", ".txt", ".sh"}
-    for base in (ROOT / "docs", ROOT / "tooling"):
-        for path in base.rglob("*"):
-            if (
-                not path.is_file()
-                or path.resolve() == CHECKER_PATH
-                or "__pycache__" in path.parts
-                or path.suffix not in text_suffixes
-            ):
-                continue
-            text_value = path.read_text(encoding="utf-8", errors="replace")
-            referenced.update(
-                int(match.group(1))
-                for match in re.finditer(r"\bR([1-9]|1[0-9]|20)\b", text_value)
-            )
+    for relative, path, text_value in tracked_text_files():
+        if relative in {
+            CHECKER_PATH.relative_to(ROOT).as_posix(),
+            RANKING_PATH.relative_to(ROOT).as_posix(),
+        } or RAW_ROOT in path.parents:
+            continue
+        referenced.update(
+            int(match.group(1))
+            for match in re.finditer(r"\bR([1-9]|1[0-9]|20)\b", text_value)
+        )
     require(referenced.issubset(mapped),
             f"downstream historical IDs lack compatibility entries: "
             f"{sorted(referenced - set(mapped))}")
-    return f"mapped=R1-R20 downstream_refs={len(referenced)} identity_only=true"
+    return (
+        f"historical={HISTORICAL_RANKING_REVISION} mapped=R1-R20 "
+        f"downstream_refs={len(referenced)} identity_only=true residual=GSR-P2-04"
+    )
 
 
 def check_public_safety(_: dict[str, Any], __: dict[str, dict[str, str]]) -> str:
@@ -546,33 +934,7 @@ def check_public_safety(_: dict[str, Any], __: dict[str, dict[str, str]]) -> str
     requirements = (ROOT / "tooling" / "requirements-scip.txt").read_text(
         encoding="utf-8"
     )
-    for required in (
-        "mktemp -d",
-        "trap cleanup EXIT HUP INT TERM",
-        'archive --format=tar "$resolved_commit"',
-        "pilot destination is not empty",
-        "network-denied sandbox",
-        "immutable lock record",
-        "Authority effect: none",
-    ):
-        require(required in pilot, f"SCIP protocol lacks required gate: {required}")
-
-    prohibited = {
-        "absolute home path": r"/home/[^\s`]+",
-        "unbound archive": r"archive\s+HEAD\b",
-        "remote Python bootstrap": r"get-pip\.py",
-        "executable npx resolution": r"\bnpx\s+(?:-y|--yes)\b",
-        "executable npm install": r"^[ \t]*(?:\$[ \t]+)?npm[ \t]+(?:install|exec)\b",
-        "predictable SCIP temp path": r"/tmp/scip(?:-|/)",
-        "recorded result table": r"^## Recorded pilot results",
-        "embedded graph counts": r"\b(?:nodes|links)\s*=\s*\d+",
-    }
-    combined = pilot + "\n" + requirements
-    for label, pattern in prohibited.items():
-        require(re.search(pattern, combined, re.MULTILINE) is None,
-                f"SCIP protocol contains {label}")
-    require("mktemp -d" in requirements,
-            "pinned Go CLI example must use a fresh temporary directory")
+    validate_scip_contract(pilot, requirements)
 
     l40 = (RAW_ROOT / "L40-small-model-extraction-quality.md").read_text(
         encoding="utf-8"
@@ -598,7 +960,10 @@ def check_public_safety(_: dict[str, Any], __: dict[str, dict[str, str]]) -> str
     ):
         require(required in l40 + l42,
                 f"L40/L42 lacks parameterized measurement boundary: {required}")
-    return "scip_protocol=public_fixture_fail_closed l40_l42=parameterized"
+    return (
+        "scip_protocol=unexecutable_complete_lock_sandbox_required "
+        "l40_l42=parameterized"
+    )
 
 
 def self_test() -> None:
@@ -612,6 +977,94 @@ def self_test() -> None:
             "claim lane parser self-test failed")
     require(is_separator_row(["---:", "---", ":---:"]),
             "separator parser self-test failed")
+
+    conclusion_claims = {
+        "SA-99": {
+            "id": "SA-99",
+            "consumer": "research/synthesis/test.md",
+            "section": "Synthesis conclusion",
+            "form": "prose",
+            "statement": "One bounded claim is supported.",
+            "lanes": ["L20"],
+        }
+    }
+    validate_governed_conclusion(
+        "research/synthesis/test.md",
+        "## Synthesis conclusion\n\n"
+        "- Supported: <!-- positive-claim: SA-99 --> One bounded claim is supported.\n"
+        "- Unsupported/unknown: All other conclusions remain open.\n",
+        "Synthesis conclusion",
+        conclusion_claims,
+    )
+    expect_failure(
+        lambda: validate_governed_conclusion(
+            "research/synthesis/test.md",
+            "## Synthesis conclusion\n\n"
+            "- Supported: One unregistered positive claim.\n"
+            "- Unsupported/unknown: All other conclusions remain open.\n",
+            "Synthesis conclusion",
+            conclusion_claims,
+        ),
+        "unmarked positive conclusion",
+    )
+
+    raw_reference_cases = {
+        "extensionless constructed path": 'fixture = Path("research") / "raw"',
+        "service normalized path": "Environment=INPUT=research/./raw/L20-item.md",
+        "config component list": 'parts = ["research", "raw"]',
+        "indirect join": 'root = os.path.join(BASE, "research", "raw")',
+        "normalized parent path": "research/../research/raw/L20-item.md",
+        "multi-argument path": 'Path(ROOT, "research", "raw")',
+    }
+    for label, value in raw_reference_cases.items():
+        require(contains_raw_source_reference(value),
+                f"raw reference detector missed {label}")
+    for filename in ("runner", "pilot.service", "research.conf"):
+        require(raw_reference_role(Path(filename)) == "consumer",
+                f"raw reference role missed alternate format {filename}")
+
+    pilot = (ROOT / "docs" / "SCIP-PILOT.md").read_text(encoding="utf-8")
+    requirements = (ROOT / "tooling" / "requirements-scip.txt").read_text(
+        encoding="utf-8"
+    )
+    validate_scip_contract(pilot, requirements)
+    expect_failure(
+        lambda: validate_scip_contract(
+            pilot.replace("tooling/scip_convert.py", "tooling/converter.py"),
+            requirements,
+        ),
+        "omitted executed converter input",
+    )
+    expect_failure(
+        lambda: validate_scip_contract(
+            pilot.replace("mode `120000`", "an unspecified file mode"),
+            requirements,
+        ),
+        "archive symlink admission",
+    )
+    expect_failure(
+        lambda: validate_scip_contract(
+            pilot.replace("reject every symlink", "accept fixture symlinks"),
+            requirements,
+        ),
+        "fixture symlink admission",
+    )
+    expect_failure(
+        lambda: validate_scip_contract(
+            pilot.replace(
+                "no host, home, or protected-repository mounts",
+                "an unspecified mount policy",
+            ),
+            requirements,
+        ),
+        "protected mount precondition",
+    )
+    expect_failure(
+        lambda: validate_scip_contract(
+            pilot + "\n```bash\necho runnable\n```\n", requirements
+        ),
+        "runnable shell path",
+    )
 
 
 def main(argv: list[str]) -> int:
@@ -628,7 +1081,7 @@ def main(argv: list[str]) -> int:
         except CheckFailure as error:
             print(f"FAIL GSR-SELF-TEST {error}", file=sys.stderr)
             return 1
-        print("PASS GSR-SELF-TEST parser_cases=4")
+        print("PASS GSR-SELF-TEST parser_cases=4 adversarial_cases=15")
         return 0
 
     try:
