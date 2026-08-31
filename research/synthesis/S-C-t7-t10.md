@@ -1,64 +1,48 @@
-# S-C Synthesis — T7 Storage (L43–49) · T8 MCP Integration (L50–56) · T9 Interfaces (L57–63) · T10 Evaluation (L64–70)
+# S-C — T7–T10 partial synthesis
 
-Date: 2026-08-25 · All 28 lanes read from `research/raw/`. Notes: L68 had no raw file (recovered from `agent://L68`); L70's raw file was mis-saved as the program manifest (recovered from `agent://L70`); L63/L68/L69/L70 carry T11-federation headers despite landing in the assigned range — included only where they gate T7–T10 (boundary raised in Open Questions).
+## Source binding
 
-## 1) Consolidated Top-10 Recommendations (deduped)
+- Exact raw-input revision: `c4ed36dc8394cc58a69bb553fc0d3f5e05b13ed0`.
+- Lane range: L43–L70.
+- Content-validated and consumed inputs: 8 of 28 lanes.
+- Qualified but unconsumed inputs: 2 of 28 lanes.
+- This is a partial synthesis, not a completeness claim.
+- Every consumed lane below is bound only to the exact eligible Git selector
+  `c4ed36dc8394cc58a69bb553fc0d3f5e05b13ed0:<mapped artifact path>` in
+  `research/RANKING.md`; reviewed-input hashes preserve provenance only.
 
-|Rank|Recommendation|Source lanes|Impact0-5|AdoptionEffort(S/M/L)|Confidence|Dependencies|
-|---|---|---|---|---|---|---|
-|1|Unified per-corpus SQLite content store: `chunks` table + FTS5 external-content (+ai/ad/au triggers) + sqlite-vec v0.1.9 vec0 (FLOAT[768], `repo_id TEXT PARTITION KEY`, INT8/BIT after recall spot-check) + JSONB generated columns for ER payloads; rowid-aligned; RRF k=60 fused in pure-SQL CTEs feeding the unchanged bge-reranker stage; WAL, `busy_timeout>=5000`, BEGIN IMMEDIATE single-writer. Lane verdict: exact-scan recall 1.0 beats ANN and removes the 3-store (tantivy/vector/payload) drift class — keep tantivy until FTS5 bm25() parity is shown at code-chunk scale|L43|5|M|H|sqlite-vec v0.1.9 (MIT/Apache-2.0); keep LanceDB only if >~1M chunks or p95<50ms fails|
-|2|Parquet snapshot substrate + SQL surface: `nx.node_link_data(G)` two-list export -> pyarrow 25.0.1 zstd `nodes.parquet`/`edges.parquet` under immutable `snapshots/{date+sha256}/` + MANIFEST.json + `latest` symlink; duckdb==1.5.5 read-only (`memory_limit='2GB'`, `threads=8`) views/recursive-CTEs as zero-ETL agent query surface; DuckDB 2.0's 40x CTE rewrite is the re-benchmark trigger|L44,L46,L59|4|S|H|None; snapshot sha256 doubles as rebuild-cache key for all derived indexes|
-|3|Stable federated node identity: composite `(corpus_id, relative/path#slug@h8)` keys minted at ingestion (CURIE display form), integer surrogate PK + sidecar alias/remap table; PREREQUISITE: fix `tools/graphify/offline_extract.py` to pass root-relative paths (current IDs embed absolute staging path + UTC run dir, so every ID churns each refresh)|L69,L63|5|M|H|Index/loader-layer only; pinned graphifyy + validators untouched; converts recurring breakage into one-time cutover (<1h at measured rates)|
-|4|SQLite freshness/validation ledger: canonical `source_fingerprints` + `validation_evidence` tables (status CHECK valid/stale/unknown) in WAL with synchronous=FULL, navigators open `mode=ro`; per-run immutable `freshness.json` exports kept for navigation compatibility; promotion becomes one ACID txn spanning fingerprints+evidence+symlink swap|L45|4|S|H|Shares R1/R2 SQLite lifecycle; ENG-C11 tri-state contract preserved|
-|5|ONE consolidated read-only MCP server (FastMCP, Apache-2.0), 5 tools: `repo_search(query, mode=hybrid\|lexical\|vector, response_format, cursor)`, `graph_neighbors`, `ppr_rank(seeds maxItems:2)`, `fetch_nodes(ids<=20)`, `graph_schema`; flat enum-constrained params, minimal required, outputSchema envelope `{hits[],truncated,next_cursor,stats}`, readOnlyHint/idempotentHint annotations, names frozen at v1. Interim step: register graphifyy's already-shipped graphify-mcp (config-only, currently gated by DEC-9)|L50,L51,L52,L53,L58|5|M|H|Rides R1/R2 backends; MCP spec rev 2025-06-18; structural read-only enforcement (authorizer/EXPLAIN class), never advisory|
-|6|Layered output/truncation contract on every surface: rows/token/byte caps (~200 nodes, ~8KiB concise page, 25k-token ceiling) via FastMCP middleware; every cut returns `{truncated:true, total_estimate, next_cursor, hint}`; oversized payloads spill to artifact ref `{ref,bytes,sha256}` (98.7%-token case study); reranked-gist-first bookend ordering; CLI verbs get matching NDJSON event streams, `--json FIELDS/--jq`, rg exit codes 0/1/2, `--max-*` caps|L52,L54,L61|4|S|H|Reuses bge-reranker ordering; pgr evidence: output shaping = 4x context cut with strictly better Hit@1/MRR|
-|7|Shared-server auth/isolation (before any concurrent multi-agent MCP exposure): launcher-minted opaque bearer tokens (FastMCP StaticTokenVerifier) keying rate limits, daily budgets, UserSession namespaces, JSON audit logs; corpus opened SQLITE_OPEN_READONLY + `PRAGMA query_only` + sqlite3_set_authorizer SELECT-only allowlist; systemd unit DynamicUser/MemoryMax~4G/CPUQuota/ProtectSystem=strict as blast-radius wall protecting the 3072 MiB floor; scratch namespaces per sub for writes|L55|4|S|H|Loopback-only posture; defer full OAuth 2.1/RFC 8707 until leaving localhost|
-|8|Local retrieval eval harness + promotion gate: beir==2.2.0 (loader/evaluator/runfiles) + ranx==0.3.21 (paired-Fisher randomization, Tukey HSD, optimize_fusion) over {scifact, nfcorpus, scidocs, fiqa, arguana} + trec-covid + CQADupStack(stackoverflow-weighted), BRIGHT stackoverflow/leetcode for native-code tasks; cache TREC runfiles per variant so ablations replay in seconds; chunk->doc max-pool projection BEFORE metrics; adopt changes only on Fisher p<0.05 at nDCG@10/Recall@100|L64,L67,L68|5|M|H|Needs R3 stable IDs for cross-refresh comparability; minutes-scale CPU costs; bm25s==0.3.11 as BM25 oracle, pytrec-eval-terrier==0.5.10 cross-check|
-|9|Self-supervised golden-set mining from own repos: heading->question templates + docstring(ast)->query + graph-edge cross-ref QA generators -> retriever-agreement prefilter (gold evidence in top-20 of >=1 live retriever) -> bge-reranker-base CE filter (RocketQA-calibrated theta_hi/lo ~=90% precision) -> RapidFuzz dedup + GLiNER entity check + ast.parse/doctest syntax gate -> versioned golden.jsonl per repo-class|L66|4|S|M-H|Feeds R8 qrels; heaviest op ~400MB fp32 rerank bursts, floor-safe; avoid YAKE (GPLv3)|
-|10|Offline answer-quality metric tier: HHEM-2.1-Open (110M, 439MB) + MiniCheck-Flan-T5-large (770M) faithfulness ensemble (GPT-4-comparable on LLM-AggreFact at <1B) + in-stack bge reranker/embedding-cosine relevance proxies (zero new weights); per-metric columns keyed by query_id in the eval DB so RRF tuning regresses against them; local-judge audit tier (~100 queries, llama.cpp) only after owner approves weights|L65|3|S|H|Sequential solo windows (judge n_ctx 4096, threads 8, no concurrent builds) to hold MemAvailable >= 3072 MiB|
+Validated and consumed inputs: L43, L48–L49, L53–L55, L57, and L64.
 
-**Just-missed / conditional (11–14):** (11) `ladybug==0.19.1` embedded openCypher as derived read-only index over parquet snapshots (`buffer_pool_size=512MiB–1GiB`, never default ~80% RAM) — adopt only when agents demonstrably need ad-hoc multi-hop Cypher beyond DuckDB recursive CTEs (L49/L57); (12) NL→template router: Drain3 0.9.11 + pyahocorasick 2.3.1 + semantic-router 0.1.16 emitting tantivy boolean strings with honest abstention — ~10–20% of ALL prompts, sequence after R8 measures real question mix (L60); (13) saved-parameterized-query skill cards (YAML + SQLite registry, fusion-based discovery, Apollo-style allow→audit→safelist rollout, EXPLAIN dry-runs) — natural follow-on once golden sets exist (L62); (14) federation scatter-gather (hierarchical RRF k=60 fallback + union bge-rerank score-merge, 250ms hedged partial-result gather, ReDDE-style quotas 5–15/corpus) and FollowTheMoney-over-SQLite entity hub — T11 scope, routed to the federation synthesis (L63, L68, L70).
+Qualified but unconsumed inputs: L60 retains public routing and abstention
+research without a representative labelled corpus; L66 retains public
+candidate-generation and quality-control research without validated target
+precision, throughput, or yield.
 
-## 2) Architecture for our host (exact pins)
+Excluded inputs: L45–L47, L51–L52, L56, L61, L63, L65, and L67 are inherited
+mixed-context blobs that are not public-safe inputs to this candidate. L44,
+L50, L58, L59, and L62 are incomplete; L68 is missing; L69 and L70 are
+misrouted. The public L69 namespace note is an unassigned design lead, not
+canonical L69 evidence.
 
-Debian 13 VPS, 16-core EPYC, no GPU, Python 3.13.5, MemAvailable floor 3072 MiB enforced by systemd units on every long-running piece. Storage spine: per-corpus `store.db` = SQLite (stock libsqlite3 3.46.1 today; vendor amalgamation >=3.51.3 or serialize checkpoints through one indexer process, because 3.46.1 sits inside the WAL-reset corruption-bug range fixed in 3.51.3/3.53.x) holding chunks + chunks_fts (external-content FTS5, public-domain core) + chunks_vec vec0 tables (sqlite-vec v0.1.9, MIT/Apache-2.0, loaded via enable_load_extension) + JSONB generated columns; beside it immutable `snapshots/{date+sha256}/nodes.parquet`+`edges.parquet` (pyarrow==25.0.1 zstd, from NetworkX==3.6.1 `node_link_data` under pinned graphifyy==0.9.16) queried read-only by duckdb==1.5.5 (`memory_limit='2GB'`, `threads=8`), with scipy CSR power-iteration PPR as the fusion leg. Serving: FastMCP 3.x/4.x — stdio for local agents, Streamable HTTP on 127.0.0.1 behind nginx when shared — exposing the 5-tool read-only surface with StaticTokenVerifier bearer tokens, ResponseLimiting + rate-limit + audit middleware; graphifyy's built-in graphify-mcp registrable immediately as the interim. Evaluation: beir==2.2.0, ranx==0.3.21, bm25s==0.3.11 oracle, pytrec-eval-terrier==0.5.10 cross-check, BRIGHT adapter; judges HHEM-2.1-Open + MiniCheck-Flan-T5-large in dedicated sequential windows. Optional: ladybug==0.19.1 (never kuzu — archived 2025-10-10) as read-only Cypher index. All MIT/Apache/BSD/public-domain, fully offline, CPU-only.
+## Supported synthesis
 
-## 3) Rejected / Excluded
+| Supported statement | Inputs | Boundary |
+| --- | --- | --- |
+| SQLite, FalkorDB, and LadybugDB are documented storage candidates for a public-fixture comparison. | L43, L48–L49 | L44 cannot support a DuckDB-VSS conclusion; durability, concurrency, license, memory, and latency must be measured. |
+| A small read-only graph/search surface can use typed schemas, response-size bounds, explicit isolation controls, and an openCypher-style interface candidate. | L53–L55, L57 | The base capability inventory is incomplete; GraphQL and DuckDB-SQL surface verdicts are unknown; no engine or transport is selected. |
+| BEIR datasets and run formats can anchor a public evaluation harness. | L64 | Dataset choice, qrels, metrics, downloads, and target-system integration require a separately reproducible harness. |
 
-- Neo4j Community 2026.07.1 as always-on service (L47): GPLv3, 1.7–2.9 GiB unswappable heap+native erodes the burst floor 1:1 (host has no swap), calendar-cadence CVE treadmill, offline-only backups of derived data. Ephemeral `graphifyy --neo4j-push` sandbox acceptable for occasional interactive exploration.
-- FalkorDB v4.20.4 (L48): SSPL-1.0 (OSI-rejected, excluded from Debian main), Docker-only deploy; technically strong at our scale but no runtime advantage over embedded options <=200k nodes; internal use unrestricted, any external service exposure = requires-owner-approval.
-- kuzu==0.11.3 (L49/L57): upstream archived read-only 2025-10-10, hosted extension server discontinued; frozen-fallback pin only. LadybugDB is the live MIT continuation.
-- Memgraph Community (L47/L51): BSL 1.1 (non-OSI) + in-memory-primary RSS economics wrong against the 3 GiB floor.
-- Apache AGE 1.7.0 (L47/L57): PG17 support shows release-tag/rc0 inconsistency; second server's ops overhead; revisit only if a central-PG pattern is ratified.
-- Local GraphQL layer, incl. strawberry-graphql 0.324.0 (L58): graphifyy already ships graphify-mcp (verified 1,719-line serve.py); near-zero gain, schema-drift + freshness-regating risk.
-- DuckPGQ v1.2.2 SQL/PGQ (L46/L59): unavailable on DuckDB 1.5.x — forces a 1.4.4 pin conflicting with the mainline/DuckLake path; research-grade.
-- Delta Lake (deltalake 1.6.2) / Iceberg / DuckLake v1.0 time travel (L46): overkill at tens-of-MB snapshots; delta-rs has open scan-regression #4623; revisit DuckLake after DuckDB 2.0 lands.
-- Apache GraphAr 0.13.0 (L46): incubating, format churn; LDBC already publishes plain Parquet convention we adopt for free.
-- pyserini 2.3.0 as harness (L67): pulls Java 21 + GB-scale deps, duplicates tantivy/sqlite-vec roles, no built-in significance testing.
-- Adopting any graph-vendor MCP server wholesale (L51): each drags in a DB service or cloud dep; copy falkordb-mcp's safety surface instead. Generic filesystem/git MCP servers redundant — both local harnesses already ship shell rg/grep + native grep/glob/read (verified config.toml/opencode.jsonc contain zero FS-search MCPs).
-- Speed-first search MCPs fff/grix as products (L52): measured negative/neutral hit-rate effect (fff Hit@1 −8 pts; tool exec = 0.4% of wall clock) — port pgr's ranking/shaping layer instead.
-- Cloud-bound eval defaults (L65): RAGAS/DeepEval/Phoenix out-of-box gpt-4o judges, LangSmith/cloud dashboards — excluded absent owner API keys.
-- Qwen2.5-3B-Instruct GGUF as local judge (L65): Qwen Research License, non-commercial — requires-owner-approval; Phi-3.5-mini (MIT) is the default substitute.
-- doc2query-- T5 expansion (L66), LLMLingua compression (L54), GraphRAG LLM community summarization (L54): violate the no-local-LLM policy or CPU-latency budget — requires-owner-approval / deferred.
-- Litestream S3/object-storage targets (L43): cloud dependency — requires-owner-approval (local-directory WAL shipping is fine).
-- Raw-score federation merges CombSUM/CombMNZ/z-score (L68): unsound across per-corpus BM25-IDF/PPR score units; rank-merge (RRF) + shared-cross-encoder union rerank only. (T11 note.)
-- Wikibase Suite / yente / NATS JetStream (L70): 8 GB-class RAM baselines and daemon ops exceed need at ~29k nodes. (T11 note.)
+## Unsupported or unknown
 
-## 4) Cross-Theme Synergies
+No conclusion is accepted from the inherited mixed-context lanes. No canonical
+conclusion is accepted for DuckDB VSS over Parquet, the base MCP capability
+inventory, local GraphQL, DuckDB SQL as the tool surface, natural-language
+routing coverage, saved-query skills, generated golden-set quality, target
+latency budgets, the L69 A/B protocol, or judge-bias mitigation.
 
-- **R3 stable IDs is the keystone**: makes eval runfiles comparable across weekly refreshes (R8), lets golden sets reference durable nodes (R9), enables saved-query skills and future entity-hub xedges, and gives R1 real foreign keys. Without it every downstream artifact silently invalidates each refresh — observed today (IDs embed UTC run dirs).
-- **R2 snapshots are one artifact, many engines**: sha256 = rebuild-cache key for tantivy/vector/graphifyy artifacts; zero-ETL DuckDB agent SQL; COPY FROM source for optional LadybugDB; even dead-upstream Kùzu's sanctioned migration path is Parquet — maximum exit-optionality.
-- **R1+R4 share one SQLite lifecycle**: single-writer WAL, BEGIN IMMEDIATE, nightly VACUUM INTO (~1 GB ~= 10–60 s NVMe) + page-stepped Connection.backup(); the OPEN_READONLY/authorizer machinery doubles as R7's enforcement hook — one security story for both stores.
-- **R5+R6+R7 ship as one delivery unit**: the 5-tool server carries its truncation envelope and token-auth wrapper; evidence says few well-described tools is the whole game (ToolDocs F1 0.13→0.45; GitHub consolidation 60–90% context cut; mcp-turnstile ~97% catalog-tax avoidable), while ProMCP shows planning+schema injection — not execution — dominates cost.
-- **R8–R10 close the loop on everything above**: ARB/pgr evidence (fuse lexical+vector+graph; ranking beats speed; evaluate ReadRecall@budget) validates the fusion design itself; MFS-coverage gates protect truncation-cap changes; ranx.optimize_fusion retunes the gated 3-way RRF on real qrels instead of guesses.
-- **One reranker, five consumers**: bge-reranker-base serves R1 (final stage), R6 (gist-first ordering), R9 (CE pair filter), R10 (relevance proxy), and T11 union rerank — argue for one warm ONNX int8 process rather than per-feature loads.
+## Synthesis conclusion
 
-## 5) Open Questions for Owner
-
-1. Theme boundary: raw files L63/L68/L69/L70 carry T11-federation headers yet fell in the L57–70 range assigned here — which synthesis owns them? (My top-10 includes only their T7–T10-relevant parts; full federation/entity-hub recs await routing.)
-2. SQLite system-lib policy: vendor amalgamation >=3.51.3 (WAL-reset corruption fix) vs serialize checkpoints on stock 3.46.1?
-3. Approve a periodic local LLM judge (default Phi-3.5-mini MIT; Qwen2.5-3B is non-commercial-license) and/or doc2query-- escalation for golden-set generation?
-4. DR posture: local-disk WAL shipping only, or an approved cloud object-storage target (Litestream S3)?
-5. Lift the DEC-9 deferral and register the already-shipped graphify-mcp now, ahead of the consolidated 5-tool server?
-6. Latency SLOs for the shared MCP surface (L68 sketches federation budgets p50<=180ms/p95<=450ms), and does any consumer ever leave loopback (decides OAuth/RFC 8707 deferral)?
-7. Is an occasional ephemeral Neo4j exploration sandbox acceptable, or skipped entirely?
+The supported evidence is limited to a public-fixture storage comparison, a
+bounded read-only query-surface experiment, and a BEIR-based evaluation
+harness. Storage, routing, interface, and evaluation-policy selections remain
+open.

@@ -1,53 +1,34 @@
-# S-E Synthesis — Theme T15 Rerank (L97–L98 landed) · Cross-Cutting Roll-Up Across All Five Groups
+# S-E — T15 and cross-cutting partial synthesis
 
-Date: 2026-08-25 · Host: Debian VPS, 16-core EPYC Genoa (AVX-512+VNNI), no GPU, Python 3.13, MemAvailable ≥3072 MiB during bursts · graphifyy==0.9.16 structural graphs · gated 3-way RRF backbone (S-A#1) is the upstream this theme consumes.
-Inputs: raw files L97-reranker-onnx.md, L98-llm-as-reranker.md (read in full). L99/L100 produced NO raw files and no such agents appear in the roster — T15 synthesizes 2 of its manifest-promised 4 lanes (gap raised §5 Q5). S-D (T11–T14) had not persisted at write time; its §5 owner questions were folded via direct peer handoff and are marked (S-D Q*). Sibling facts cross-referenced from S-A/S-B/S-C files on disk.
+## Source binding
 
-## 1. Consolidated top-ranked recommendations (deduped)
+- Exact raw-input revision: `c4ed36dc8394cc58a69bb553fc0d3f5e05b13ed0`.
+- Lane range: L97–L100.
+- Content-validated and consumed inputs: 0 of 4 lanes.
+- Qualified but unconsumed inputs: 1 of 4 lanes.
+- This is a partial synthesis, not a completeness claim.
+- Any future consumed lane must bind to an exact eligible Git selector recorded
+  in `research/RANKING.md`; reviewed-input hashes preserve provenance only.
 
-|Rank|Recommendation|Source lanes|Impact0-5|AdoptionEffort(S/M/L)|Confidence|Dependencies|
-|---|---|---|---|---|---|---|
-|1|Post-fusion cross-encoder rerank stage: self-export BAAI/bge-reranker-base → ONNX → dynamic INT8 (QInt8, per_channel=True, after quant_pre_process; avx512_vnni preset) served IN-PROCESS via sentence-transformers `CrossEncoder(backend="onnx")` behind a 1-slot semaphore; truncate max_length 512→≈330 (−~35% compute, linear seq-len scaling), length-desc bucketed batches of 32 (~12–16k tok/run), intra_op=dedicated pinned cores, inter_op=1, graph-opt O2/O3 + startup warmup; FAIL OPEN to fused RRF order on timeout. Expected ≈0.35–0.6 s p50 @top-50, ≈0.7–1.2 s @top-100 ×300-tok passages; budget 1.5–2× p95|L97,L98,L21|4|M|H|S-A#1 fused top-K window; #2 gate|
-|2|Quality gate BEFORE enablement: on ≥100 sampled own-corpus queries × identical candidate lists require ΔNDCG@10(int8−fp32) ≥ −0.01 AND top-1 agreement ≥95% (log %top-10-reorders); `reduce_range=False` on VNNI Zen4; worse deltas ⇒ hunt export/eval bugs, not quant noise — v2-m3 dynamic-int8 flipped top-1 on a significant query fraction (a-ivanovitch), so the gate is mandatory, not optional|L97,L98|4|S|H|golden set + BEIR harness (S-C#8,S-C#9)|
-|3|Model arbitration as ONE family decision: bge-reranker-base (MIT, 278M XLM-R-base, fastest) vs bge-reranker-v2-m3 (Apache-2.0, 568M, ~0.54 avg BEIR nDCG@10, ≲1.5 s top-50→top-10 on 16 cores via fastembed==0.8.x TextCrossEncoder custom registration) — both ONNX-int8 CPU-feasible far under the 3 GiB floor; decide by gate outcome under the latency budget, not vendor claims|L97,L98|3|S|H|#1,#2|
-|4|ONE warm reranker process, many consumers: start in-process; promote to a single shared TEI cpu-1.9 sidecar (officially lists bge-reranker-base for /rerank, loads pre-quantized int8 ONNX, token-dynamic batching; systemd MemoryMax≤1.2 G, core-pinned) once ≥2 repos/consumers need rerank; serves final ranking + gist-first bookends (S-C#6) + CE pair filter for golden mining (S-C#9) + relevance proxy (S-C#10) + future T11 union rerank|L97,+S-C synergy|3|M|H|#1; daemon-ownership ruling (S-B Q5)|
-|5|If any LLM rerank tier is ever approved: Qwen3-Reranker-0.6B Q4 OFFLINE/nightly ONLY, top-20 candidates, two-token logit scoring P(yes) from final-token logits (zero parse failures, prefill-only batching) — the one constrained-output form proven to help; never interactive|L98|2|M|M|owner compute windows via S-B#10 governor|
-|6|OpenVINO static-INT8 route (optimum-intel) as measured fallback runtime if sbert-style micro-bench favors it on this box (anchor: 60.1 ms/pair v2-m3 INT8 on a mobile VNNI part, 2.4–3× vs FP16); sbert names ov-qint8 the default CPU pick "when minor performance degradations are acceptable"|L97|2|S|M|#1,#2|
+Qualified but unconsumed input: L99 exists and retains only opt-in, minimized,
+aggregate-signal learning-to-rank research; this synthesis does not consume it.
 
-Recs 1–4 are zero-generative-LLM, day-one adoptable inside the floor (int8 RSS ≈0.45–0.9 GB incl. ORT arena).
+Excluded inputs: L97 and L98 are inherited mixed-context blobs that are not
+public-safe inputs to this candidate. L100 exists, but its corrupted,
+misrouted input supplies no usable canonical result (`CAN-U100`).
 
-## 2. Architecture recommendation (exact tools + versions)
+## Supported synthesis
 
-Position in stack: gated 3-way RRF (tantivy ∥ sqlite-vec ∥ PPR, S-A#1) emits fused top-K (K=50 interactive, K=100 nightly) → T15 rerank stage → final slice, sigmoid-normalized scores spliced back. Export path (one-time, artifacts hash-pinned and committed): `optimum-cli export onnx --model BAAI/bge-reranker-base --task text-classification` → `quant_pre_process` → `quantize_dynamic(weight_type=QuantType.QInt8, per_channel=True)` → `onnx/model_qint8_avx512_vnni.onnx`. Day-one serving: sentence-transformers `CrossEncoder(model_kwargs={"file_name": "onnx/model_qint8_avx512_vnni.onnx"}, backend="onnx")` on onnxruntime≥1.20 (cp313 wheels verified in S-A), Python 3.13; session config graph-opt ALL, intra_op=dedicated physical cores, inter_op=1, semaphore(1), one startup warmup run. Alternative loader for v2-m3: fastembed==0.8.x `TextCrossEncoder.add_custom_model("onnx-community/bge-reranker-v2-m3-ONNX")` (FlagEmbedding fallback). Promotion path: single huggingface/text-embeddings-inference cpu-1.9 unit (Apache-2.0) with MemoryMax=1.2G, pinned core set, `--max-batch-*` caps — adopted only when a second consumer appears (matches S-C's one-warm-process argument). Governance: the rerank slot registers with the S-B#10 MemAvailable+PSI governor (pause <4096 MiB / resume >6144 MiB hysteresis) so it never collides with tantivy bursts, Splink DuckDB, or judge solo windows; thread pinning specifically avoids the ORT #19494 oversubscription trap (misconfigured batched int8 = 8–15 s). Fully offline; MIT/Apache-2.0 throughout; no owner flags for day-one adoption.
+No supported synthesis statement remains in this lane range.
 
-## 3. Rejected / excluded
+## Unsupported or unknown
 
-- Generative listwise reranking at small local scale (RankGPT-style sliding window over RankZephyr-7B/RankVicuna-7B): input-order shuffle collapses DL19 nDCG@10 65.80→25.17 even before model shrinkage; multi-pass generative inference is prefill-bound — unusable interactively on 16 shared cores.
-- Pointwise 3–8B causal-LM scoring (Qwen3-Reranker-4B/8B, mxbai-rerank-v2 causal backbone): est. ~2–3.5 min/query for 8B top-50×300 tok at 16-core Genoa prefill rates [INFERENCE]; several× slower per pair than a cross-encoder — GPU-era designs.
-- Permutation self-consistency / Kemeny aggregation (Found-in-the-Middle): ×5–20 inference multiplier; 5 perms ≈67% of 20-perm gain yet still unabsorbable CPU-only.
-- JSON-grammar constrained output as a rerank-quality fix: validity ≠ correctness — format restrictions often DEGRADE reasoning (EMNLP 2024 Industry) and fix neither position nor verbosity bias; only two-token logit scoring survives (rec 5).
-- jina-reranker-v2-base-multilingual: CC-BY-NC-4.0 non-commercial weights ⇒ requires-owner-approval; also <2 docs/s CPU kernel per S-A.
-- FlashRank as integration layer: Apache-2.0 lib but bundled model artifacts CC-BY-SA per Config.py; loses hash-pinned provenance vs self-export.
-- Prebuilt community int8 ONNX artifacts (Xenova/onnx-community, kftof, temsa uploads): convenient but unversioned provenance — self-export + commit hash instead.
-- cross-encoder ms-marco-TinyBERT-L-2-v2 / MiniLM-L-12-v2 floor fallbacks: MS MARCO-supervised, weaker out-of-domain/code transfer — revisit only if the latency floor proves binding.
-- LLM judging for ranking generally: systematic score inflation + length bias (SIGIR 2026; UMBRELA) makes LLM-reranked lists gameable by long stuffed docs; cross-encoders less exposed — also informs S-C#10 judge design.
+No reranking conclusion is accepted from L97 or L98. L99 is qualified but not
+consumed, so no learning-to-rank experiment is supported here. L100 cannot
+support PageRank or centrality-prior fusion.
 
-## 4. Cross-theme synergies (all five groups)
+## Synthesis conclusion
 
-- One reranker, five consumers made concrete (T15×S-C): final ranking (S-C#1), gist-first bookends (#6), CE pair filter for golden-set mining (#9, RocketQA-calibrated θ), relevance proxy (#10), T11 union rerank — rec 4 is that single-warm-process decision.
-- Gate infrastructure is shared, not new (T15×S-C×S-B): the ΔNDCG/top-1-agreement gate runs on the SAME frozen-label machinery as S-B#6 promotion gates and the S-C#8 ranx harness; ranx.optimize_fusion then retunes the upstream RRF weights feeding this stage — one eval pipeline closes the loop end-to-end.
-- Golden-mining loop closes on itself (T15×S-C#9): the production reranker doubles as the mining filter; versioned golden.jsonl must key on stable node IDs (S-C#3 keystone) or every refresh invalidates the gate.
-- Governor arbitration (T15×S-B#10): rerank joins MemAvailable+PSI hysteresis beside Splink DuckDB bursts, SCIP indexing, llama.cpp decode, judge solo windows — one enforcement mechanism program-wide; thread pinning is the rerank-specific contribution.
-- Fail-open symmetry (T15×S-A): timeout ⇒ fused RRF order preserves the S-A#1 baseline; mirrors S-C#6's `{truncated,next_cursor}` graceful-degradation contract — no surface hard-fails on an enhancement stage.
-- Zero-LLM-first ordering strengthened (T15×S-A×S-B): day-one rerank needs NO compute windows, NO API keys, NO NC licenses — unlike S-A#9 LightRAG or S-B#9 extraction; sequencing rerank first maximizes early nDCG per unit of owner approvals.
-- Owner-question convergence: the five groups' questions collapse into ~7 rulings — (a) compute windows (S-A Q1, S-B recs 9–10); (b) license stances GPL/NC (S-A Q3, S-B Q4, S-C Q3, my jina item, S-D Q3); (c) storage substrate (S-A Q2 + S-C Q2 + S-D Q2 — one SQLite-amalgamation-vs-PG17 ruling covers all); (d) egress/API keys (S-B Q3 Wikidata dumps, S-D Q5 hosted-LLM cache wiring); (e) daemon/runtime ownership incl. memory caps (S-B Q5, my rec 4, S-D Q4 Node sidecar, S-C Q7 Neo4j sandbox); (f) human-review/eval budget (S-A Q5 ≈ S-B Q1 ≈ my #2 gate); (g) scope/coverage (S-C Q1 boundary, S-D Q7 worktree farms, missing lanes below).
-- Data-quality roll-up for Main: L70's raw file is mis-persisted (holds RESEARCH-MANIFEST content; the true L70 entity-hub artifact sits in L74's file); L13/L14/L18/L20/L31/L35/L68 exist only as recovered agent artifacts; L92/L94–L96 and L99/L100 never produced raw files — exactly the unstable-provenance class S-C#3 fixes for graph IDs.
-
-## 5. Open questions for owner
-
-1. Latency SLO: accept +0.35–1.2 s interactive rerank p50, or hold rerank offline/batch until S-C Q6 sets budgets? Gates rec 1 enablement mode.
-2. Model pick: ratify gate-decided choice between bge-reranker-base (MIT) and bge-reranker-v2-m3 (Apache-2.0), or state a prior preference now?
-3. NC-license stance: same ruling as S-B Q4 — is jina-reranker-v2 (CC-BY-NC) acceptable for internal use, or stays excluded?
-4. Daemon-ownership policy: fold the TEI sidecar (rec 4) into the S-B Q5 substrate ruling so ONE decision assigns who owns long-running units and their memory caps.
-5. Coverage gap: dispatch or drop L99 (learning-to-rank from local usage signals) and L100 (PageRank/centrality priors — partially covered by S-A#5 PPR)? Manifest promises 4 T15 lanes; 2 landed.
-6. Eval funding confirmation: the rec 2 gate is one more consumer of the ~50-query labeled set (S-A Q5) — a single budget line covers RRF tuning, rerank gating, and regression guards.
+This range supplies no validated, consumed conclusion. Static and generative
+reranking, learned usage signals, and centrality priors all remain unsupported
+or unknown for this candidate.
