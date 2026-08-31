@@ -1,22 +1,30 @@
 # L66 — Self-supervised golden-set mining from repository documents and code
 
-Scope: question/evidence pair synthesis (heading-question, docstring-to-query, cross-ref) + QC of generated sets. Constraints honored: CPU-only, offline, permissive licenses, MemAvailable ≥ 3072 MiB floor (all picks are rule/statistical/embedding-reuse; heaviest op = bge-reranker-base inference at ~400 MB fp32, well under floor).
+Scope: question/evidence pair synthesis from headings, docstrings, and
+cross-references, plus quality-control candidates. Public-source claims are
+retained as recorded; target precision, throughput, yield, resource use, and
+data authority are not established.
 
 |Item|Type(tool/repo/strategy/technique)|URL|License|Maturity|StackFit0-5|EffGain0-5|EffectGain0-5|QualGain0-5|AdoptCost0-5(lower=better)|Conf(H/M/L)|KeyEvidence|
 |---|---|---|---|---|---|---|---|---|---|---|---|
-|Heading→question template synthesis (h1–h6 tree → "What is X?"/"How do I …?"/"Where is X configured?"; evidence=section text)|technique|https://pmc.ncbi.nlm.nih.gov/articles/PMC9886210/ (AQG survey, 2023)|n/a (own code)|high (standard AQG practice)|5|4|3|2|1|H|Heading trees already exist as graphifyy nodes; template QG is the dominant no-LLM AQG family per survey (checked 2026-08-25)|
-|Docstring→query mining via stdlib `ast` (summary-line → query; signature+body → evidence; doctest examples retained)|technique|https://docs.python.org/3/library/ast.html|PSF (stdlib)|high|5|4|3|3|1|H|Zero-dep, O(files); filters: ≥6 query tokens, drop TODO/stub summaries; verified pattern used by CodeSearchNet corpus construction|
-|Cross-ref/graph-edge QA mining (wiki-links, see-also, mkdocs nav, import edges via graphifyy==0.9.16 → relational questions; evidence=target chunk+edge context)|technique|(internal, pinned dep)|n/a|high|5|3|2|3|2|H|Edges are precomputed by pinned graphifyy; only pair-emission code needed|
+|Heading→question template synthesis (h1–h6 tree → "What is X?"/"How do I …?"/"Where is X configured?"; evidence=section text)|technique|https://pmc.ncbi.nlm.nih.gov/articles/PMC9886210/ (AQG survey, 2023)|n/a (candidate code)|high (standard AQG practice)|5|4|3|2|1|H|The cited AQG survey describes template-based question generation; target question quality remains unmeasured.|
+|Docstring→query mining via stdlib `ast` (summary-line → query; signature+body → evidence; doctest examples retained)|technique|https://docs.python.org/3/library/ast.html|PSF (stdlib)|high|5|4|3|3|1|H|The standard library exposes syntax trees and docstrings needed to generate candidates. Filtering rules and candidate quality remain design hypotheses.|
 |rake-nltk 1.0.6 keyphrase pseudo-queries (statistical, no model)|tool|https://pypi.org/project/rake-nltk/|MIT|high (v1.0.6 stable)|4|3|2|1|0.5|H|PyPI metadata MIT, py>=3.6 (checked 2026-08-25); ~KBs RAM. NOTE: prefer over YAKE — yake 0.7.3 (rel 2026-02-09) is **GPLv3**, license trap|
-|KeyBERT 0.9.0 MMR-diverse keyphrase queries reusing existing sqlite-vec embedder (no new model weights)|tool|https://pypi.org/project/keybert/|MIT|high (0.9.0 rel 2025-02-07)|4|3|2|2|1|M|PyPI MIT confirmed; embedder-reuse keeps incremental RAM ≈0 vs loading second model|
-|Cross-encoder pair filtering with in-stack BAAI/bge-reranker-base (keep score>θ_hi, drop <θ_lo after calibrating θ on ~100 hand-labeled pairs)|strategy/QC|https://arxiv.org/abs/2010.08191|MIT (HF model card, checked 2026-08-25)|high|5|4|5|5|1|H|RocketQA (NAACL 2021): CE denoising lifted MS MARCO MRR@10 26.03→36.38; pos/neg thresholds 0.9/0.1 gave >90% manual accuracy — a source precedent, not a target precision guarantee|
-|Retriever-agreement sanity gate (gold evidence must hit top-20 of ≥1 existing retriever: BM25/dense/fused before CE pass)|strategy/QC|(internal)|n/a|high|5|3|3|3|0.5|M|Cheap pre-filter so bge-reranker only scores survivors; catches mislinked evidence at ~zero cost using existing tantivy/sqlite-vec indexes|
-|RapidFuzz dedup + GLiNER entity-overlap QC + per-repo/heading-level distribution report (both libs already in stack)|strategy/QC|(in-stack: RapidFuzz, GLiNER)|n/a|high|5|2|2|3|0.5|H|token_set_ratio≥90 dedups near-identical synthesized questions; GLiNER entity-inclusion check flags vague queries|
+|KeyBERT 0.9.0 MMR-diverse keyphrase queries with a separately selected embedder|tool|https://pypi.org/project/keybert/|MIT|high (0.9.0 rel 2025-02-07)|4|3|2|2|1|M|PyPI metadata recorded an MIT license. Model compatibility, added memory, and candidate quality require measurement.|
+|Cross-encoder pair filtering after labelled calibration|strategy/QC|https://arxiv.org/abs/2010.08191|MIT (recorded model-card license)|high|5|4|5|5|1|H|RocketQA reported a denoising improvement and high manual accuracy at its thresholds. That is a source precedent, not a target precision guarantee; thresholds require a labelled target sample.|
 |Syntax/executability gate for code evidence (`ast.parse`/`compile` every code chunk; sandboxed doctest for docstring pairs)|strategy/QC|https://docs.python.org/3/library/doctest.html|PSF|high|5|2|2|2|0.5|H|Guarantees evidence chunks are valid, runnable Python — eliminates silent index-corruption false negatives|
 |ranx 0.3.21 (bootstrap CIs, randomization tests) — pick over ir-measures 0.4.3 unless trec_eval parity needed|tool|https://pypi.org/project/ranx/|MIT (ir-measures: Apache-2.0)|high (ranx 0.3.21 rel 2025-08-07; ir-measures 0.4.3 rel 2025-11-25)|4|3|2|3|1|H|Bootstrap CIs on nDCG@10 prevent over-reading small self-supervised sets; ranx also ships RRF fusion utilities matching gated 3-way RRF|
-|Git-history mining: commit-msg ↔ doc/code-diff pairs ("Why was X changed?")|strategy|(internal git log -p)|n/a|medium (low volume, high precision)|3|2|2|2|1.5|M|Fully offline; best for CHANGELOG/ADR-heavy repos; cap at repos with >100 relevant commits|
-|doc2query-- (T5-small local expansion) as escalation path|technique|https://arxiv.org/abs/2104.07081|Apache-2.0 (models)|mature models|2|4|4|4|4|M|CPU-feasible (~250 MB, ~1–2 s/doc on 1 EPYC core) but violates current no-local-LLM stack policy → **requires separate model-policy review**|
+|doc2query-- (T5-small local expansion) as escalation path|technique|https://arxiv.org/abs/2104.07081|Apache-2.0 (models)|mature models|2|4|4|4|4|M|A generative expansion path adds model, resource, and quality risks; the recorded size and timing estimates are hypotheses and require separate model review plus measurement.|
 
-**Recorded candidate:** a generator trio (heading-to-question, docstring-to-query, and cross-reference pairs) feeding retriever-agreement, cross-encoder, deduplication/entity, and syntax checks, with ranx bootstrap intervals. The recorded precision, throughput, and yield expectations are hypotheses only; calibrate thresholds and measure yield on a labelled target sample before treating the output as a golden set.
+**Recorded candidate:** heading-to-question and docstring-to-query generators
+feeding syntax checks, deduplication, labelled cross-encoder calibration, and
+bootstrap intervals. Cross-reference generation, retriever-agreement, and
+entity-overlap checks remain unverified design hypotheses rather than
+public-source findings. All recorded precision, throughput, and yield
+expectations are hypotheses; measure them on an authorized labelled sample
+before treating output as a golden set.
 
-Integration sketch: emit candidate JSONL from graph nodes/edges plus an `ast` walk, gate agreement against representative lexical/vector/graph indexes, batch-score survivors with a cross-encoder, apply threshold/deduplication/entity/syntax checks, and emit a versioned dataset plus an evaluation report. Throughput and retained-pair yield require measurement.
+Evaluation shape: emit candidates from document structure and an `ast` walk,
+apply only predeclared quality checks, retain exact source references, and
+publish an evaluation report beside the versioned dataset. Data authority,
+thresholds, throughput, and retained-pair yield require measurement.

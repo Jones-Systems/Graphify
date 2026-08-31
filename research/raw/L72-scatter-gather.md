@@ -4,7 +4,9 @@ Date recorded: 2026-08-25.
 
 ## Evidence boundary
 
-This repair retains the public comparison of rank fusion, score normalization, quotas, bounded parallelism, and hedging. Private service facts, corpus counts, timing estimates, and deployment claims from the reviewed input are omitted. Performance and quota choices remain benchmark-gated.
+This record retains only the public comparison of rank fusion, score
+normalization, quotas, bounded parallelism, and hedging. Performance, quota,
+service, and deployment choices remain benchmark-gated.
 
 ## Findings
 

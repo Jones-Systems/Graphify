@@ -1,21 +1,14 @@
 # LANE L78 — T12 freshness: Git-delta driven re-extraction into the code graph
-Date: 2026-08-25 · Scope: Git-based change detection between refreshes, cost modeling, cross-file edge correctness risks, and tooling. Public-source claims are retained as recorded; private corpus inventories and timings are omitted.
+Date recorded: 2026-08-25. Scope: Git-based change detection between
+refreshes, cross-file edge correctness risks, and public tooling precedents.
+No target inventory, cost, cadence, or runtime is established.
 
-## Cost model
+## Cost boundary
 
-**Corpus shape used for the model:** a small-to-medium, documentation-heavy multi-repository corpus with linked worktrees. Including duplicate checkouts multiplies repository scans; content-hash attributes can identify identical content.
-
-**Extraction throughput:** official tree-sitter-rust benchmark: 2,157 lines parsed in 6.48 ms ≈ **9.9 MB/s ≈ 333k lines/s single core**; plausible native range **5–15 MB/s**, worst-case grammars ~1.3 MB/s (tree-sitter issue #1277). Even at a conservative effective 1 MB/s (parse + queries + SQLite writes, Python-bound):
-
-| Scenario | Estimate [INFERENCE unless noted] |
-|---|---|
-| Total tracked text, 18–25 small repos | ~100–500 MB (order-of-magnitude) |
-| Full rebuild, 1 core @ 1–5 MB/s effective | 1.5–8 min CPU |
-| Full rebuild, 16-way parallel | **seconds to ~1 min wall clock** |
-| RAM floor | tree-sitter+SQLite worker ≈ tens of MB × 16 ≪ 3072 MiB floor — never binding |
-| Typical daily churn across 20 repos | tens–hundreds of files ≈ 1–5% of corpus → delta extract < 1–3 s |
-
-**Break-even:** delta wins when `changed_fraction × extract_cost + reconciliation_overhead + baseline_bookkeeping < full_rebuild_cost`. At daily cadence the modeled full rebuild remains inexpensive; delta matters at higher cadence, where it can reduce refresh latency and avoid rerunning downstream stages globally. Treat these as model implications until measured on the target corpus.
+The generic break-even condition is
+`changed_fraction × extract_cost + reconciliation_overhead + baseline_bookkeeping < full_rebuild_cost`.
+The reviewed input did not provide public, immutable evidence for any operand,
+so no target timing or break-even point is retained.
 
 ## Correctness risks (cross-file edges et al.), ranked
 
@@ -23,33 +16,40 @@ Date: 2026-08-25 · Scope: Git-based change detection between refreshes, cost mo
 2. **Wrong/missing baseline SHA** — assuming HEAD~1 or a stale stored SHA silently misses changes after rebase/amend/force-push/shallow clone. Fix: store per-repo `indexed_sha`; verify reachability (`git cat-file -e prev^{commit}`) else fall back to FULL rebuild. Never assume HEAD~1.
 3. **Untracked files invisible to diff** — `git diff` does not show untracked paths (git-scm docs). Fix: union with `git status --porcelain=v1 -uall`.
 4. **Deletions/renames orphan nodes+edges** — must handle D/R/T diff-filter letters and cascade-delete incident edges both directions, not just insert additions.
-5. **Worktree ≠ HEAD during refresh** — indexing dirty worktree while commits move. Content-hash-keyed rows stay self-consistent regardless; record HEAD at refresh start.
-6. **Torn state on crash** — mixed-version graph. Fixed staging + atomic swap already in stack covers this.
-7. **Cross-repo edges** — repo B's edges into changed repo A are invisible to A-local git delta. Global qualified-name registry + nightly full pass backstops.
-8. **Generated-noise churn** — uv.lock/package-lock rewrites dominate raw diff volume; filter `*.lock`, dist/, node_modules/ before counting changes.
-9. **Global score staleness** — centrality/ranking computed pre-delta becomes approximate; recompute globally (cheap at <1M nodes) rather than approximating.
+5. **Working tree ≠ HEAD during refresh** — indexing uncommitted files while commits move can mix source states. Bind every run to its declared source mode and revision.
+6. **Torn state on crash** — mixed-version graph. Use staged output plus an atomic promotion boundary.
+7. **Cross-repo edges** — repo B's edges into changed repo A are invisible to A-local git delta. A qualified-name registry plus a policy-defined full comparison is one candidate backstop; cadence requires measurement.
+8. **Generated-noise churn** — generated or vendored paths can dominate raw diff volume; filters must be explicit, versioned, and tested.
+9. **Global score staleness** — centrality or ranking computed before the delta becomes approximate; choose full recomputation or a validated incremental algorithm from measurements.
 
-Prior art confirms the hard part is unsolved off-the-shelf: CodeQL `database create` is a full rebuild per commit (incrementality exists only as PR-flow `--overlay-base/--overlay-changes`); SCIP/LSIF indexers emit whole-repo snapshots; GitHub archived stack-graphs (2025-09-09) — the one purpose-built file-incremental name-resolution engine — leaving orchestration to integrators anyway (their own discussion #263 sketches blob-ID caching, supporting the candidate design).
+Recorded prior art shows different boundaries: CodeQL documents an overlay
+flow for pull-request analysis, SCIP indexers emit repository snapshots, and
+the archived stack-graphs project discussed blob-ID caching. None supplies a
+complete target refresh protocol.
 
 ## Findings table
 
 |Item|Type(tool/repo/strategy/technique)|URL|License|Maturity|StackFit0-5|EffGain0-5|EffectGain0-5|QualGain0-5|AdoptCost0-5(lower=better)|Conf(H/M/L)|KeyEvidence|
 |---|---|---|---|---|---|---|---|---|---|---|---|
-|Git plumbing change detection: `diff --name-status -M --diff-filter=ACDMRT <base> HEAD` ∪ `status --porcelain=v1 -uall`|tool|https://git-scm.com/docs/git-status.html ; https://git-scm.com/docs/diff-options|GPLv2 (git binary)|maximal|5|4|3|4|0|H|Untracked absent from diff, shown by porcelain -uall; ACDMRT filter letters; verified 2026-08-25|
-|Stored-baseline-SHA protocol per repo + reachability check, FULL fallback|technique|https://git-scm.com/docs/git-cat-file|n/a (internal)|proven pattern (Zoekt compares stored branch+commit metadata)|5|2|4|5|0|H|Zoekt indexserver skips/updates/falls-back on stored commit state (sourcegraph/zoekt main.go, checked 2026-08-25)|
-|Content-addressed deterministic IDs sha256(repo\|path\|content) for nodes/files|technique|internal|n/a|in-stack (deterministic-ID rebuilds)|5|3|5|5|1|H|Makes delta upserts idempotent, worktree duplicates dedupe, stale edges detectable as dangling refs|
-|Staged transactional refresh: DELETE-by-(repo,path) + INSERT + atomic stage→live swap|technique|(SQLite blessing-like; DuckDB MIT)|public-domain (SQLite)|production-grade|5|2|5|4|1|H|Eliminates torn-state risk; complements existing fixed staging|
-|Two-phase symbol-level edge reconciliation over changed-symbol set|technique|internal (cf. arxiv.org/abs/2211.01224 path-stitching model)|n/a|novel-here, standard-in-lit|5|3|5|5|2|M|Design reasoning; stack-graphs paper formalizes per-file subgraph + late stitching|
+|Git plumbing change detection: `diff --name-status -M --diff-filter=ACDMRT <base> HEAD` plus an explicit uncommitted-source policy|tool|https://git-scm.com/docs/git-status.html ; https://git-scm.com/docs/diff-options|GPLv2 (git binary)|mature Git interface|5|4|3|4|0|H|`git diff` does not enumerate untracked paths; porcelain status can do so. Rename and type-change handling must be explicit.|
+|Stored-baseline revision plus reachability check and full fallback|technique|https://git-scm.com/docs/git-cat-file; https://github.com/sourcegraph/zoekt|public Git docs; Zoekt Apache-2.0|public precedent|5|2|4|5|0|H|Verify that the stored base is a reachable commit before using a delta. The recorded Zoekt source is a precedent for comparing stored branch/commit state and falling back.|
+|Staged transactional refresh|technique|https://www.sqlite.org/lang_transaction.html|public domain|standard transaction pattern|5|2|5|4|1|H|Build and validate staged state before one explicit promotion boundary; exact delete/upsert and swap mechanics depend on the selected store.|
+|Changed-symbol edge reconciliation|design lead|https://arxiv.org/abs/2211.01224|paper|unverified target design|5|3|5|5|2|M|The stack-graphs paper formalizes per-file subgraphs and later stitching. A changed-symbol reconciliation algorithm and completeness proof remain target work.|
 |GitHub stack-graphs / tree-sitter-stack-graphs|repo|https://github.com/github/stack-graphs|MIT OR Apache-2.0|ARCHIVED 2025-09-09; core v0.14.1, tsg v0.10.0 2024-12-13|3|2|4|3|3|H|Archived read-only Sept 2025 → DO NOT adopt; its blob-ID caching idea (discussion #263) validates design|
 |Zoekt `zoekt-git-index -incremental` (default true) + `-delta` mode|tool|https://github.com/sourcegraph/zoekt/blob/main/cmd/zoekt-git-index/main.go|Apache-2.0|active (Sourcegraph maintains; PR #1050 branch-aware delta)|3|3|3|4|1|H|Incremental-by-default trigram indexer; prior art + optional lexical layer; falls back to full rebuild when state diverges|
 |Universal Ctags 6.2.1 JSONL per-file shards (`--append` is NOT update-safe)|tool|https://docs.ctags.io/en/latest/man/ctags.1.html|GPL-2.0|mature (rel 2025-10-25)|3|3|2|3|1|H|Docs: append adds without dedup/delete → regenerate changed file's shard; matches per-file staging|
-|Watchman since-cursor file watching|tool|https://github.com/facebook/watchman|MIT|active weekly rels (v2026.08.x verified)|2|1|2|2|2|H|Redundant vs `git status` at ~20 small repos; revisit only for event-driven push refresh|
+|Watchman since-cursor file watching|tool|https://github.com/facebook/watchman|MIT|active weekly releases on recorded date|2|1|2|2|2|H|A cursor-based watcher is a possible lower-latency input, but necessity and correctness require a measured cadence and overflow policy.|
 |GitPython 3.1.59 vs pygit2 1.20.0 vs plain subprocess git|tool|https://pypi.org/project/GitPython/ ; https://pypi.org/project/pygit2/|BSD-3 / GPLv2+linking-exception|current (both rel Aug 2026)|4|1|1|2|0|H|Subprocess git = zero deps, sufficient at scale; GitPython ≥3.1.59 required (≤3.1.58 vulns GHSA-284h-m62q-gf8w)|
-|Nightly full-rebuild backstop + drift audit vs `git ls-files`|strategy|https://git-scm.com/docs/git-ls-files|n/a|cheap here (full rebuild ≈ minutes max)|5|1|5|5|0|H|Bounds any delta bug's blast radius to one day; also catches missed-changes class R2/R7|
+|Periodic full-rebuild backstop + drift audit against `git ls-files`|strategy|https://git-scm.com/docs/git-ls-files|n/a|standard correctness backstop|5|1|5|5|0|H|A full comparison can detect missed-change classes. Cadence and cost require measurement.|
 |Rename awareness `-M` + blob-tree-hash equality for moved identical content|technique|https://git-scm.com/docs/diff-options|n/a|maximal (git built-in)|3|2|1|2|0|H|Similarity-threshold misses degrade safely to delete+add under content-hash IDs|
 
 ## Verdict
-Recorded candidate: Git plumbing (diff/status union plus a stored reachable base revision), content hashes, staged delete/upsert/swap, and changed-symbol edge reconciliation, with periodic full-rebuild drift checks. At the declared multi-repository scale, delta primarily targets freshness latency and bounded blast radius rather than aggregate throughput; the break-even point requires measurement. Integration sketch: per repository, union committed and uncommitted changes, filter generated inputs, delete changed/deleted paths, re-extract into staged rows, reconcile edges touching changed qualified names, atomically swap, and store the new base revision; an unreachable base forces a full rebuild.
+Recorded candidate: Git plumbing with a stored reachable base revision, staged
+refresh, changed-symbol reconciliation, and a periodic full comparison.
+Whether uncommitted files participate is an explicit source-mode decision.
+Generated-path filters, deletion and rename semantics, edge reconciliation,
+promotion, base advancement, and fallback behavior require deterministic tests;
+an unreachable base must force a full rebuild. No cost advantage is claimed.
 
 ### Key sources (all accessed 2026-08-25)
 - git-scm.com/docs/git-status.html, /docs/diff-options (porcelain v1, -uall, ACDMRT, rename detection)

@@ -1,9 +1,16 @@
 # L86 — Token-budget-aware traversal depth selection
 
-Date: 2026-08-25. Target constraints: 16-core CPU-only execution, Python 3.13, offline/self-hostable components, permissive licenses, and a declared memory floor. Public-source claims are retained as recorded; local corpus and package-path evidence are omitted.
+Date recorded: 2026-08-25. Public-source claims about traversal and emitted
+context budgeting are retained as recorded. No target graph size, runtime,
+memory budget, package layout, or deployment fit is established.
 
 ## Scope read (what "budget" means here)
-With no local LLM, the scarce resource is the TOKEN SIZE OF EMITTED EVIDENCE CONTEXT handed downstream (downstream prompts, human review). "Traversal depth" therefore decomposes into: (a) how many nodes are expanded, (b) how many branches survive pruning, (c) how many survive serialization into the context window. Published approaches split four ways: classical budget-bounded heuristic search (focused-crawling frontiers, weighted-A*/IDA*/ARA*), graph-RAG systems shipping explicit context token budgets (GraphRAG, LightRAG), token-cost-driven pruning policies (PathRAG, ToG), and cross-stage budget allocation (FrugalGPT, Adaptive-RAG, TALE).
+The constrained resource considered here is the token size of emitted evidence
+handed downstream. "Traversal depth" therefore decomposes into: (a) how many
+nodes are expanded, (b) how many branches survive pruning, and (c) how many
+survive serialization. Published approaches split four ways: classical
+budget-bounded heuristic search, graph-RAG context budgets, token-cost-driven
+pruning, and cross-stage budget allocation.
 
 ## Findings table
 
@@ -17,20 +24,25 @@ With no local LLM, the scarce resource is the TOKEN SIZE OF EMITTED EVIDENCE CON
 |LightRAG per-source token caps|repo|https://github.com/HKUDS/LightRAG|MIT|High (v1.5.6 stable 2026-08-06; v1.5.7rc2 2026-08-19)|4|3|3|2|1|H|MAX_ENTITY_TOKENS=6000 / MAX_RELATION_TOKENS=8000 / MAX_TOTAL_TOKENS=30000 defaults, overridable PER QUERY via QueryParam(top_k=60, chunk_top_k=20, ...); chunk budget computed as total − ACTUAL entity tokens − ACTUAL relation tokens; documented invariant entity+relation < total (docs/ProgramingWithCore.md, checked 2026-08-25)|
 |PathRAG flow-based pruning + path-level token economy|technique|https://ojs.aaai.org/index.php/AAAI/article/view/40268 (arXiv:2502.14902)|n/a (paper; community impls on GH)|High (AAAI 2025; arXiv 2025-02-20)|5|4|4|4|2|H|Resource flow S(v)=Σ αS(v_j)/|out(v_j)| with branch PRUNED when S(v_i)/|out(v_i)|<θ (soft decay replaces hard hop cutoff); keep global top-K paths by mean node resource (K=15); measured: N=40,K=15 → −13.69% tokens vs LightRAG at BETTER quality; PathRAG-lt N=20,K=5 → −40.41% tokens at parity (50.56% win-rate); complexity O(N²/((1−α)θ)) on the paper's example graphs|
 |HippoRAG 2: PPR decay REPLACES explicit depth caps|repo/technique|https://arxiv.org/abs/2502.14802|MIT (OSU-NLP-Group/HippoRAG)|High (paper 2025-02-20; PyPI hipporag 2.0.0a4 2025-06-24, README refs 2.0.0a5)|5|3|4|4|1|H|Concept-seeded Personalized PageRank propagates relevance smoothly through the KG — hop-count depth limiting becomes less central because distance decay is built into PPR mass; token budget shifts to top-k passage/entity assembly after ranking. This is a design analogue, not target validation.|
-|Adaptive-RAG query-complexity routing|strategy|https://aclanthology.org/2024.naacl-long.389/|Apache-2.0 (starsuzi/Adaptive-RAG)|High (NAACL-HLT 2024, pp.7036-7050)|4|4|3|2|2|M|T5-Large classifier routes each query to zero-/single-/multi-step retrieval (silver labels from which strategy succeeds). No-LLM port for a CPU-only port: route on cheap available lexical and vector agreement signals — BM25 top-score margin, RRF leg-agreement, sqlite-vec cosine — to SET per-query depth tier D∈{1..3} and budget B∈{4k,8k,16k}; port itself unvalidated (hence M)|
+|Adaptive-RAG query-complexity routing|strategy|https://aclanthology.org/2024.naacl-long.389/|Apache-2.0 (starsuzi/Adaptive-RAG)|High (NAACL-HLT 2024, pp.7036-7050)|4|4|3|2|2|M|The cited system routes queries among retrieval depths with a classifier. A non-generative analogue based on lexical/vector agreement is an unvalidated design hypothesis; no depth tiers or token budgets are accepted.|
 |Think-on-Graph beam pruning (width × depth as the two budget knobs)|strategy|https://arxiv.org/abs/2307.07697|Apache-2.0 (GasolSun36/ToG — verified NOT MIT)|High (ICLR 2024 oral; v6 2024-03-24)|3|2|3|4|2|M|An LLM-guided beam search bounds branching with beam width and hops with maximum depth. A CPU-only, non-generative port would need lexical or embedding scorers and remains unvalidated.|
 |FrugalGPT budget-constrained cascade allocator|strategy|https://arxiv.org/abs/2305.05176|Apache-2.0 (stanford-futuredata/FrugalGPT)|High (TMLR 2024-12; arXiv 2023-05-09)|3|3|3|2|2|M|Optimizes call sequence + escalation thresholds UNDER an explicit cost constraint (reported cost cuts 98.3%/73.3%/59.2% matching best single model); transpose from model-cascade to STAGE-cascade: split the context budget across BM25 leg / vector leg / graph expansion / answer reserve with learned or hand thresholds|
 |TALE token-budget-aware reasoning (elasticity caveat)|technique|https://arxiv.org/abs/2412.18547|n/a (code: GeniusHTX/TALE)|Medium-high (ACL 2025 Findings)|3|2|2|3|1|M|Documents "token elasticity": budgets pushed TOO LOW backfire (GPT-4o-mini example: vanilla 258 tok; budget 50→86; budget 10→157 — WORSE than mid budget); oracle budget via binary search, deployment via zero-shot estimator. Lesson for traversal: enforce MIN-VIABLE SERIALIZATION per node and per-leg floors; never let dynamic shrinking produce degenerate stub contexts|
 |cspy — exact Resource-Constrained Shortest Path solver|tool|https://pypi.org/project/cspy/|MIT|Stale (v1.0.3, 2023-01-05; C++ extension)|2|1|1|2|3|M|Label-setting + Lagrangian-relaxation algorithms solve EXACT budget-vs-quality tradeoffs on single s-t paths; wrong SHAPE for multi-seeded neighborhood expansion and overkill at 10^4 nodes; listed for completeness as the formal RCSP reference point|
 
-## Target scale boundary
+## Deployment boundary
 
-The reviewed input does not provide public, immutable evidence for target graph size, runtime, or memory headroom. Apply these algorithms only after benchmarking candidate expansion, serialization cost, and memory use on the target corpus.
+Apply these algorithms only after benchmarking candidate expansion,
+serialization cost, evidence retention, and memory use on an authorized target
+corpus.
 
 ## Verdict
-Top pick: a GraphRAG-style HARD context-budget ledger (`max_context_tokens` + proportional per-leg splits + add-until-full/revert-on-overflow) wrapped around a Chakrabarti-style SCORE-PER-TOKEN best-first frontier over graph neighbors, with PPR decay serving as the implicit depth discount (HippoRAG 2 insight) — ≈150 lines, ZERO new dependencies, requires no new runtime dependency in its minimal form.
-Why: it turns static hop limits into a continuous budget ledger where every serialized node must justify its tokens; each component ships in production systems today and the published numbers back the upgrades (PathRAG −40.41% tokens at parity quality; GraphRAG/LightRAG prove the control surface; TALE warns to keep per-leg floors).
-Integration sketch: (1) Budget dataclass estimating tokens as len(chars)//4 (code skews denser — calibrate on target chunks), deduct system/query overhead FIRST, reserve 15-20% tail for the synthesis slot; (2) expand frontier best-first by Δ(PPR mass + RRF rank) ÷ serialized-token-cost of each candidate node, stopping when top-of-heap cost exceeds remaining budget or marginal Δscore/tokens falls below a PathRAG-analog θ; escalate D∈{1,2,3} IDA*-style only while budget remains; (3) pick per-query tier (easy→D1/4k, hard→D3/16k) from BM25-margin + vector-agreement signals (Adaptive-RAG port) and apply LightRAG-style per-leg caps (entities/relations/chunks). SKIP cspy/RCSP exact solvers — wrong problem shape, stale, and unnecessary at 10^4 nodes.
+The recorded candidate combines an explicit emitted-context ledger with a
+score-per-token frontier and a distance-decaying graph score. Published
+systems provide useful control surfaces and examples, but they do not validate
+this combination. Token estimation, component reserves, marginal-value score,
+depth policy, and minimum evidence coverage all require a target evaluation;
+the numeric settings from the cited systems are examples rather than defaults.
 
 ## Evidence log (all accessed 2026-08-25)
 - Chakrabarti, van den Berg, Dom, "Focused Crawling: A New Approach", VLDB 1999 (sigmod.org dblp entry + PDF mirrors): priority-frontier formulation, classifier/distiller signals, hard fetch budget.

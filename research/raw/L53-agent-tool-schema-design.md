@@ -1,6 +1,7 @@
-# LANE L53 — Agent tool-schema design for search/traversal tools
-Date: 2026-08-25 · Scope: naming conventions, parameter shapes, result-size contracts from function-calling literature + production MCP servers → concrete schema for the target graph-query tools.
-Constraints check: pure design/schema lane — zero runtime compute, CPU-only safe, fully offline, no cloud keys (nothing flagged requires separate review).
+# LANE L53 — Tool-schema design for search and traversal
+Date: 2026-08-25. Scope: recorded naming conventions, parameter shapes, and
+result-size contracts from function-calling literature and public MCP servers.
+No local service, implementation stack, or deployment state is established.
 
 ## Candidate table
 
@@ -27,13 +28,15 @@ Constraints check: pure design/schema lane — zero runtime compute, CPU-only sa
 
 **Result-size contracts.** Defaults are small everywhere: 5–20 items (Brave/Tavily), 25k-token hard ceiling (Claude Code), target ≤8KiB (~2k tokens) for concise pages. Cursor-based pagination, not raw offsets (Brave caps offsets at 9 because they scale badly). Truncation must be explicit (`truncated:true` + opaque `next_cursor`) and truncation/error text must teach recovery by naming the narrowing parameters. Verbosity controlled via `response_format: concise|detailed` enum. Two-stage progressive disclosure (cheap id+snippet page → targeted full-payload fetch) is the shared pattern of Context7 (resolve→query), filesystem (search→read), GitHub (list→get).
 
-## Concrete schema recommendation — mj-graph-search v1
+## Generic candidate schema
 
-Surface: exactly 5 read-only tools (<20 guidance; each maps to one internal workflow over graphifyy==0.9.16 graphs, tantivy BM25, LanceDB vectors, gated RRF k=60, bge-reranker-base):
+The public evidence supports evaluating a small read-only surface. The
+following five-tool sketch is a generic design candidate, not a binding
+interface or description of an existing service:
 
 1. `repo_search(query*, mode=hybrid[hybrid|lexical|vector], scope?[all|code|docs|null], path_glob?, lang?, limit 1..30=10, response_format=concise[concise|detailed], cursor?)` — single fused entry point; engine composition stays server-side (Anthropic consolidation rule).
 2. `graph_neighbors(node_id*, direction=in|out|both default both, edge_types[]?, depth 1..3=1, limit 1..50=25)`.
-3. `ppr_rank(seeds*[]maxItems:2, top_k 1..50=20, alpha 0.05..0.5=0.15)` — the schema itself encodes the existing <2-seed PPR gate via maxItems; description explains why more seeds are rejected.
+3. `ppr_rank(seeds*[]maxItems:2, top_k 1..50=20, alpha 0.05..0.5=0.15)` — the schema encodes a bounded seed set via maxItems; the limit requires evaluation.
 4. `fetch_nodes(ids*[]maxItems:20, fields=node[node|content|edges]=node)` — stage-2 progressive disclosure; per-id failures reported individually (filesystem batch precedent).
 5. `graph_schema()` — returns node/edge type inventory once (neo4j get_neo4j_schema precedent; cheap planner context).
 
@@ -44,9 +47,16 @@ Unified result envelope (outputSchema):
 {"schema_version":"v1",
  "hits":[{"id":"node:a1b2","score":0.83,"path":"src/x.py","symbol":"foo","loc":{"start":10,"end":42},"snippet":"≤280 chars in concise mode"}],
  "truncated":false,"next_cursor":null,
- "stats":{"engines":["bm25","vec","rrf","rerank"],"elapsed_ms":120}}
+ "stats":{"engines":["lexical","vector","fusion"],"elapsed_ms":120}}
 ```
 Rules: deterministic order (score desc, id asc tiebreak); stable id format cross-tool; server-enforced caps (default 10/max 30 hits; ~8KiB concise page; absolute ceiling 25k tokens); never silent elision — truncated:true + next_cursor always accompany cuts; errors set isError:true with recovery instructions naming valid parameters.
 
-## Verdict (top pick)
-Ship ONE consolidated MCP server (5 tools above) conforming to spec rev 2025-06-18: flat enum-constrained params, minimal required sets, unified envelope with cursor pagination + response_format verbosity control, readOnly/idempotent hints, two-stage ids→fetch_nodes flow. Why: Anthropic/OpenAI consolidation + <20-tool guidance, ToolDocs' F1 0.13→0.45 description effect, RoTBench name-stability penalty, BFCL parallel-multiple degradation, GitHub's method-param consolidation proving 60–90% context savings at scale. Integration: wrap existing graphifyy/tantivy/LanceDB ops behind these verbs with zero new runtime deps (offline, CPU-safe, Python 3.13-compatible); freeze tool names at v1 and eval with BFCL-style AST + distractor probes before publishing.
+## Recorded conclusion
+
+The public comparison supports evaluating a consolidated, read-only tool
+surface with flat enum-constrained parameters, minimal required sets, an
+explicit paginated result envelope, read-only and idempotent annotations, and
+a two-stage identifier-to-detail flow. The five-tool sketch above remains a
+candidate: names, caps, pagination semantics, compatibility with the selected
+protocol revision, and evaluation criteria must be independently specified
+and tested before adoption.

@@ -1,12 +1,15 @@
-# Recovered unassigned namespace-strategy note
+# Unassigned namespace-strategy candidate
 
 Date recorded: 2026-08-25.
 
-## Provenance status
+## Evidence status
 
-This file path is assigned to L69, whose manifest question is an evaluation A/B protocol. The reviewed input instead contained namespace and identifier research. Its private samples, paths, corpus counts, timings, and live-defect claims have been removed. The content below remains a misrouted, unassigned design candidate and does not satisfy canonical L69.
+This file path is assigned to L69, whose manifest question is an evaluation
+A/B protocol. The reviewed input instead contains public-source namespace and
+identifier research. The content below is a misrouted, unassigned design
+candidate and does not satisfy canonical L69.
 
-## Recovered public comparison
+## Public comparison
 
 | Item | Type | URL | License | Maturity | Key evidence or tradeoff |
 | --- | --- | --- | --- | --- | --- |
@@ -18,6 +21,9 @@ This file path is assigned to L69, whose manifest question is an evaluation A/B 
 | BLAKE3 digest attribute | tool | https://pypi.org/project/blake3/ | CC0-1.0 or Apache-2.0 | active on recorded date | Candidate digest primitive for immutable content or entity evidence, not proof of a primary-key policy. |
 | Alias/remap table | migration strategy | https://www.sqlite.org/lang_createtable.html | public-domain documentation | standard relational pattern | An append-only mapping from old identifiers to new identifiers can preserve references across a deliberate scheme migration. |
 
-## Recovered design lead
+## Design lead
 
-A composite `(corpus_id, local_key)` key with a CURIE display form and an alias/remap table is the recorded candidate. No repository-specific defect, scale, migration duration, or adoption decision is established by this sanitized note. The canonical L69 A/B-protocol result remains unknown.
+A composite `(corpus_id, local_key)` key with a CURIE display form and an
+alias/remap table is the recorded candidate. No repository-specific defect,
+scale, migration duration, or adoption decision is established. The canonical
+L69 A/B-protocol result remains unknown.

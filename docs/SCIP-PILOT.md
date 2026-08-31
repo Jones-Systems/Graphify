@@ -12,17 +12,18 @@ independently reproducible acceptance evidence.
 
 | tool | version | integrity |
 |------|---------|-----------|
-| Go `scip` CLI (github.com/scip-code/scip) | v0.9.0 | `scip-linux-amd64.tar.gz` sha256 `fc2e7273...fec75`, double-sourced: GitHub release-assets API `digest` field AND local sha256sum of the download agree; extracted binary reports `scip version v0.9.0` |
+| Go `scip` CLI (github.com/scip-code/scip) | v0.9.0 | `scip-linux-amd64.tar.gz` sha256 `fc2e7273e110be9f35924da1066000183791e8bfdb0391355de6eaaa070fec75`; the committed record reports agreement between the release digest and a downloaded-file hash |
 | @sourcegraph/scip-python | 0.6.6 (npm dist-tags.latest at pilot time) | fetched via `npx -y`; its native launcher bootstraps a JVM automatically |
 | PyPI `scip` | NEVER INSTALL | unrelated GPL flow-cytometry package, not a SCIP client |
 
-## Recorded environment prerequisites
+## Recorded tool prerequisites
 
-- The recorded environment had `node`/`npm` available for `npx`.
-- The recorded run did not require system Java; the launcher fetched a JVM.
+- `node` and `npm` are required for the recorded `npx` path.
+- The recorded launcher fetched its own JVM; this behavior requires fresh
+  verification before use.
 - `pip` MUST be resolvable on PATH or indexing aborts with "Could not find
-  valid pip command" even though nothing is installed with it. This host has
-  none in the recorded environment; isolated workaround:
+  valid pip command" even though nothing is installed with it. The recorded
+  workaround used an isolated temporary environment:
   ```bash
   python3 -m venv --without-pip /tmp/scip-venv
   curl -fsSL https://bootstrap.pypa.io/get-pip.py -o /tmp/get-pip.py
@@ -118,9 +119,7 @@ Extend corpus-by-corpus only when ALL hold:
    local-filtering regressed - stop and re-check before promoting.
 3. Determinism: converting an identical index twice produces byte-identical
    graph JSON (nodes and links are emitted sorted; asserted in smoke test).
-4. RAM floor holds in a fresh measured run. The historical report says the
-   pilot stayed above 20 GiB MemAvailable against a 3072 MiB floor, but no
-   committed telemetry binds that observation; keep bulk runs behind the
-   applicable resource governor.
+4. A fresh run establishes peak memory and preserves its declared resource
+   reserve. No committed telemetry binds the recorded pilot to a host budget.
 5. Descriptor normalizer decision recorded: either aliasing accepted with a
    recorded baseline or normalized before rollout.

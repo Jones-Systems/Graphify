@@ -1,13 +1,15 @@
 # LANE L19 — SPLADE sparse neural retrieval: local CPU/onnx feasibility + learned-sparse alternatives
 
-> **Recovery status:** the exact Markdown below is committed at reviewed
-> revision `d1dbac36208b0066fc8907bd9fe9408fc5c51a60`, but its immutable
-> pre-commit origin is unavailable in this repository. Retain it as
-> origin-unbound research; exclude it from validated synthesis until its
-> evidence is independently re-established. Linked sources are citations,
-> not current-version verification.
+> **Evidence status:** the underlying report was committed at reviewed
+> revision `d1dbac36208b0066fc8907bd9fe9408fc5c51a60`; this file is a
+> sanitized derivative. Its immutable pre-commit origin is unavailable in
+> this repository. Retain it as origin-unbound research; exclude it from
+> validated synthesis until its evidence is independently re-established.
+> Linked sources are citations, not current-version verification.
 
-Date: 2026-08-25 | Constraints: Debian VPS, 16-core EPYC Genoa (AVX-512 VNNI), NO GPU, MemAvailable floor 3072 MiB, Python 3.13, offline/permissive preferred.
+Recorded date: 2026-08-25. The source comparison concerns CPU-capable,
+offline learned-sparse retrieval and permissive-license alternatives. No
+later source currentness, deployment hardware, or workload fit is claimed.
 
 ## Findings table
 
@@ -19,14 +21,18 @@ Date: 2026-08-25 | Constraints: Debian VPS, 16-core EPYC Genoa (AVX-512 VNNI), N
 |prithivida/Splade_PP_en_v1 (+v2 successor)|model|https://huggingface.co/prithivida/Splade_PP_en_v1|Apache-2.0|Medium-High|4|1|3|3|1|H|BERT-base 110M independent SPLADE++; MRR@10 37.2 in-domain / 48.7 BEIR-OOD; ~113 active tokens/doc (low FLOPs vs naver 126-234); ships ONNX; packaged by fastembed at 0.532 GB|
 |fastembed SparseTextEmbedding (ONNX runtime wrapper)|tool|https://qdrant.github.io/fastembed/examples/Hybrid_Search/|Apache-2.0|High|4|2|2|2|1|H|ONNX/CPU packaging incl. Qdrant/bm25 (0.010 GB), bm42 (0.09 GB), Splade_PP (0.532 GB); real-world CPU reports: 0.55 s/doc batched to ~3 s/doc unoptimized indexing, 50-100 ms/query SPLADE++ encoding (fastembed GH #539, #648)|
 |sentence-transformers >=5.0 SparseEncoder|tool|https://huggingface.co/blog/train-sparse-encoder|Apache-2.0|High (v5.0.0 2025-07-01)|5|3|2|3|1|H|Unified API for SPLADE / inference-free SPLADE / CSR; loads opensearch-* and prithivida/* models; v5.1.0 (2025-08-06) added ONNX+OpenVINO export with reported 2-3x sparse-inference speedup + int8 quantization; py3.13-compatible|
-|ONNX Runtime dynamic-int8 BERT pipeline (optimize -> quantize_dynamic)|technique|https://onnxruntime.ai/docs/performance/model-optimizations/quantization.html|MIT|High|5|3|1|1|1|H|First cp313 wheels in onnxruntime 1.20.0 (2024-10); PyPI shows 1.28.0 current (retrieved 2026-08-25); typical 1.2-2x speedup, larger with AVX512-VNNI (EPYC Genoa has it); int8 cuts 268 MB model to ~70 MB resident — trivially under 3072 MiB floor|
+|ONNX Runtime dynamic-int8 BERT pipeline (optimize -> quantize_dynamic)|technique|https://onnxruntime.ai/docs/performance/model-optimizations/quantization.html|MIT|High|5|3|1|1|1|H|First cp313 wheels in onnxruntime 1.20.0 (2024-10); PyPI showed 1.28.0 on the recorded date. The report cites workload-dependent int8 speedups and a model-size reduction from roughly 268 MB to 70 MB; deployment RSS and speed remain unmeasured.|
 |BGE-M3 sparse lexical-weights head|model|https://huggingface.co/BAAI/bge-m3|MIT|High|2|0|4|4|3|M|568M XLM-R-large, 250k vocab, learned lexical weights (ReLU projection); CPU int8 C impl ~1.8k input tok/s (Soju06/bge-m3.c); PyTorch CPU ~4-6 seq/s reports (FlagEmbedding #1295) — only worth RAM/compute if its dense+multilingual heads are also wanted|
 |Inference-free / two-phase asymmetric SPLADE (neural doc expansion + tokenizer-only queries)|technique|https://github.com/qdrant/fastembed/issues/648|n/a (pattern)|Emerging->prod (OpenSearch ships it)|5|5|3|3|1|M|Benchmark cited in fastembed #648: median query latency 57 ms -> 4.3 ms with <1.3% relative quality drop; identical design to OpenSearch two-phase neural search; converts SPLADE query path to BM25-class cost|
 |LanceDB FTS/BM25 + hybrid RRF (NO native learned-sparse index)|tool|https://docs.lancedb.com/search/full-text-search|Apache-2.0|High|5|4|1|2|1|H|Docs checked 2026-08-25: native FTS inverted index scores BM25, hybrid=dense ANN+FTS w/ RRF reranker; no API for sparse-vector (SPLADE CSR) dot-product retrieval — SPLADE postings need external inverted index or rerank-over-candidate-pool|
 |docTTTTTquery / doc2query-T5 document expansion|strategy|https://github.com/castorini/docTTTTTquery|Apache-2.0 (checkpoints)|High (2019, classic)|2|4|3|2|2|H|MS MARCO passage test MRR@10 18.6 -> 27.2 (+46% rel) with retrieval still vanilla BM25 (Nogueira & Lin 2019); but T5-base generation ~40 queries/doc is expensive offline CPU and OOD gains lag SPLADE-style contextual expansion|
 |Qdrant/bm42-all-minilm-l6-v2-attentions|model|https://qdrant.github.io/fastembed/examples/Supported_Models/|Apache-2.0|Experimental (effectively frozen)|3|4|1|1|1|M|Attention-weighted token weighting, 0.09 GB ONNX, near-BM25 query cost; positioned between BM25 and SPLADE but little third-party validation since 2024|
-|Cohere sparse embeddings (embed-v3/v4 API)|service|https://docs.cohere.com/docs/private-deployment-overview|Proprietary cloud — separate service review required|High|0|2|4|4|4|M|API-only ($0.12/M input tokens); embed v4 exposes only dense output types (float/int8/binary), no open weights; private deploy = licensed GPU containers. Violates offline/no-cloud-keys constraint|
+|Cohere sparse embeddings (embed-v3/v4 API)|service|https://docs.cohere.com/docs/private-deployment-overview|Proprietary cloud — separate service review required|High|0|2|4|4|4|M|API-only in the recorded comparison; embed v4 exposed dense output types rather than open sparse weights, while private deployment required licensed containers. It does not fit an offline-only evaluation.|
 
 ## Verdict
-Top pick: OpenSearch neural-sparse doc-v2-distill (Apache-2.0, 67M/~70 MB int8) served through sentence-transformers SparseEncoder exported to ONNX Runtime int8 — gives +~5 BEIR points over BM25 with a ZERO-inference tokenizer-only query path (BM25-class query latency, ~4.3 ms median demonstrated for this pattern), trivially inside the 3 GiB RAM floor. Run it as doc-side expansion feeding an external inverted postings index fused with existing BM25/PPR via RRF; skip all naver/SPLADE-v3 weights pending license review and Cohere under the offline constraint; BGE-M3 only if its dense multilingual head is adopted separately.
-Integration sketch: (1) offline job walks graphifyy==0.9.16 node-link JSON chunks -> SparseEncoder(doc-v2-distill) -> (term_id, weight) postings into a sqlite/tantivy inverted index keyed by node id alongside the structural graph; (2) query path: BERT-tokenize query (<1 ms) -> postings lookup + dot-product -> RRF-fuse with BM25 FTS and PPR-over-KG signal; (3) optional phase-2: rerank top-100 with v2-distill bi-encoder ONNX (~10-30 ms) when precision matters; revisit LanceDB if native sparse-vector index lands (tracked in lance-format/lance discussions).
+The origin-unbound report favored OpenSearch neural-sparse
+doc-v2-distill for its recorded license, size, BEIR result, and
+tokenizer-only query pattern. That preference is not a validated synthesis
+conclusion. A fresh evaluation would need to reproduce the quality result,
+measure indexing and query cost, select an inverted-postings implementation,
+and review every model license before use.

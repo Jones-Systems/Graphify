@@ -4,7 +4,9 @@ Date recorded: 2026-08-25.
 
 ## Evidence boundary
 
-The reviewed input combined a general systemd/cgroup design with live machine telemetry and fixed unit values. This repair retains only the parameterized design. No current operating-system version, memory capacity, swap state, unit installation, or deployment readiness is established.
+Only the parameterized, public systemd and cgroup design is retained. No
+operating-system version, memory capacity, swap state, unit installation,
+numeric limit, or deployment readiness is established.
 
 Target constraints: Linux with systemd and cgroup v2, CPU-only execution, and an explicit `MemAvailable` floor. The design uses admission gates, soft throttles, hard caps, scheduling bias, and single-writer serialization.
 
