@@ -25,8 +25,9 @@ package, or a launcher that downloads a JVM is prohibited.
 Before any pilot process starts, one immutable, operator-supplied run lock must
 bind all of the following:
 
-- the authorized public-fixture repository identity and one exact full source
-  commit, with the expected tree identity;
+- an immutable local source-object bundle for the authorized public fixture,
+  including its path, byte count, digest, one exact full commit and tree
+  identity, and a complete reachable-object manifest;
 - the exact Graphify tool revision and the exact blob identity, byte count, and
   cryptographic digest of the executed `tooling/scip_convert.py` and
   `tooling/validate.py` bytes;
@@ -47,9 +48,12 @@ bind all of the following:
 - the dynamic loader, shared libraries, plugins, helper scripts, and executable
   runtime closure reachable by every process above, with exact local identity,
   byte count, and cryptographic digest;
+- any fixture-preparation patch as a pre-locked patch with exact bytes and
+  digest, plus the expected canonical final fixture manifest and its digest;
 - the exact argv and bounded environment for every process;
-- the sandbox implementation, immutable configuration, mount plan, network
-  denial, and their evidence format; and
+- the sandbox implementation, immutable configuration, mount and namespace
+  plan, descendant process policy, capability/no-new-privileges policy,
+  network denial, resource bounds, and their evidence format; and
 - a cryptographic digest over the canonical run-lock record itself.
 
 The executed converter and validator must come from the exact locked Graphify
@@ -61,76 +65,139 @@ may the run record assert that every executable byte was immutably bound.
 
 ## Exact source binding and isolated copy
 
-The operator-owned runbook must implement these conditions without weakening
-them:
+The containment boundary in the next section must already be active before
+source verification or resolution begins. The source checkout is never
+mounted. Instead, the sandbox receives the lock-bound local source-object
+bundle in its own ephemeral filesystem. The operator-owned runbook must
+implement these conditions without weakening them:
 
-1. Resolve the supplied full source commit as a commit and require exact
+1. Prove the source is complete local, non-promisor input before resolving any
+   selector: reject shallow or partial-clone state, promisor configuration,
+   missing reachable objects, object alternates, and any lazy fetch path. Walk
+   the exact commit's full reachable tree/blob closure and verify every object
+   locally by identity against the locked reachable-object manifest. Network
+   denial must make an attempted fetch fail closed rather than populate it.
+2. Resolve the supplied full source commit as a commit and require exact
    equality with the lock. Never resolve or archive `HEAD`, a branch, a tag, or
    another mutable selector.
-2. Inspect the locked tree before archiving. Reject every Git symlink entry
+3. Inspect the locked tree before archiving. Reject every Git symlink entry
    (mode `120000`) and every gitlink/submodule entry (mode `160000`).
-3. Allocate a new private run root with the locked `mktemp -d` implementation.
+4. Allocate a new private run root with the locked `mktemp -d` implementation.
    Install a cleanup trap through the locked shell before creating run
    material. The trap may remove only that newly returned run root; an
    operator-selected or pre-existing cleanup path is never accepted.
-4. Create the fixture destination beneath that run root and prove it is an
+5. Create the fixture destination beneath that run root and prove it is an
    empty destination owned by this run. Never reuse a pre-existing path, even
    when it appears empty.
-5. Create an archive from the exact resolved commit with the locked archive
+6. Create an archive from the exact resolved commit with the locked archive
    tool. Before extraction, reject absolute or traversal paths, symlinks, hard
    links, devices, FIFOs, sockets, gitlinks, and every other non-regular entry.
-6. Extract only through the locked extractor into the new empty destination.
+7. Extract only through the locked extractor into the new empty destination.
    After extraction, reject every symlink and non-regular entry, prove every
    resolved path remains beneath the run root, and verify the extracted tree
    against the locked source tree identity. An empty fixture also fails.
 
-Fixture preparation, if an indexer requires static package metadata, is
-limited to a deterministic patch inside the isolated copy. Record its exact
-bytes and digest in the run evidence. The preparation must not read the source
-checkout after archive creation. This public protocol intentionally does not
-prescribe source-package names, modules, tests, symbols, descriptors, or corpus
-statistics.
+## Pre-locked preparation and complete final fixture identity
 
-## Credential-free filesystem containment
+Optional preparation is not an operator-time editing allowance. If an indexer
+requires static package metadata, the immutable run lock must contain the
+pre-locked patch, its exact base-tree identity, byte count, digest, exact
+lock-bound applicator and argv, and a complete expected post-patch fixture
+manifest. A no-change run records an explicit empty-patch identity. Missing,
+additional, reordered, context-mismatched, or fuzz-applied changes fail closed.
 
-Before the indexer starts, place the verified tool bundle and isolated fixture
-inside a fresh credential-free filesystem sandbox with its own mount and user
-isolation, or an independently demonstrated equivalent boundary. Network
-denial alone is insufficient.
+The final fixture manifest must canonically enumerate every final relative
+path with its entry type, mode, byte count, and cryptographic digest. Regular
+files use a content digest. Directory entries use the byte count and digest of
+their canonical sorted child-record encoding. Symlinks and other non-regular
+entries remain prohibited. The manifest must include its own canonical digest
+in the run lock.
+
+After applying the pre-locked patch inside the sandbox, rescan the complete
+fixture and require exact equality with the locked final fixture manifest
+immediately before indexing. Then make the fixture a read-only immutable
+snapshot for the indexer and place all index/output writes in separate bounded
+scratch space. No mutation, package resolution, lazy fetch, or metadata
+generation may occur between final-manifest verification and indexing.
+Preparation must not read the source bundle after archive creation. This
+public protocol intentionally does not prescribe source-package names,
+modules, tests, symbols, descriptors, or corpus statistics.
+
+## All-stage network, process, filesystem, and resource containment
+
+The lock-bound sandbox launcher is the only pre-boundary control-plane
+process. Before the first pilot process, it must create a fresh credential-free
+filesystem, user, mount, PID, network, and IPC namespace boundary or an
+independently demonstrated stronger isolation boundary. Every pilot stage and
+every descendant must remain inside that same boundary: source completeness
+proof, source resolution, tree inspection, archive creation and validation,
+extraction, preparation, final-manifest verification, indexing, conversion,
+validation, evidence collection, and cleanup. A helper, hook, filter, archive
+program, patch tool, compiler, indexer child, or validator child that can spawn
+or execute outside the boundary blocks the run.
+
+This credential-free filesystem sandbox is mandatory for the complete pilot,
+not only for the indexer.
+
+Network access must be denied before source verification and remain denied for
+every stage and descendant. Deny all address families, DNS, proxies, inherited
+network descriptors, and network-capable host or runtime sockets. A negative
+connectivity test from inside the boundary and descendant-inheritance evidence
+are required. Network denial must prevent Git, package managers, build tools,
+indexers, and language runtimes from lazy-fetching code or objects; it is not a
+substitute for the other containment controls.
 
 The sandbox must have no host, home, or protected-repository mounts. It may see
-only the locked tool bundle as read-only input and a new run root provisioned
-inside its own ephemeral filesystem as bounded scratch space; that run root
-must not be a host bind mount. Supply an empty isolated home and temporary
-directory. Remove credentials and authentication variables, and expose no
-SSH/GPG agents, credential stores, cloud configuration, container-engine
-sockets, host runtime sockets, or unrelated filesystem trees. The operator
-must record the sandbox configuration digest and a mount table from inside the
-boundary before indexing. Any unexpected mount, credential, socket,
-environment entry, or ability to resolve a host/protected path blocks
-execution.
+only the locked tool bundle and locked local source-object bundle as read-only
+seeded input, plus a new run root provisioned inside its own ephemeral
+filesystem as bounded scratch space; that run root must not be a host bind
+mount. Supply an empty isolated home and temporary directory. Remove
+credentials and authentication variables, and expose no SSH/GPG agents,
+credential stores, cloud configuration, container-engine sockets, host runtime
+sockets, or unrelated filesystem trees.
 
-Network access must be denied for indexing, conversion, and validation. The
-recorded denial mechanism and an independent negative connectivity check are
-evidence requirements, not substitutes for filesystem containment.
+Use a private process namespace. Deny the host `/proc`; if a process filesystem
+is required, mount a namespace-private minimal `/proc` that exposes only
+sandbox PIDs. Do not expose host `/sys`, host devices beyond an exact minimal
+allowlist, host cgroup controls, or host process/debug interfaces. Drop every
+capability, set no-new-privileges for the complete descendant tree, and bind an
+immutable syscall/process policy that prevents namespace escape, privilege
+gain, tracing of host processes, new mounts, and unapproved executable paths.
+
+The run lock must set finite aggregate and per-process PID-count, CPU-time,
+memory, output-file-size, open-file, scratch-space, and wall-clock bounds for
+the sandbox and all descendants. The supervisor must enforce those bounds,
+terminate the complete descendant tree on timeout or violation, and record the
+limit configuration and terminal state. Missing, unlimited, unenforced, or
+descendant-bypassable bounds block execution.
+
+Before source verification, and again immediately before indexing, record from
+inside the boundary the sandbox configuration digest, mount table, namespace
+identities, process view, capability sets, no-new-privileges state, network
+denial evidence, and effective resource bounds. Any unexpected mount,
+credential, socket, environment entry, host PID/path visibility, capability,
+process escape, or resource-policy variance blocks execution.
 
 ## Index, convert, and validate
 
 After all gates pass, an operator-owned runbook may invoke only lock-bound
 absolute paths and exact argv. It must:
 
-1. run the verified indexer against only the isolated fixture;
-2. place `index.scip` inside the run root;
-3. verify the locked Go `scip` bytes again, record its version, and render the
+1. verify the complete final fixture manifest, read-only fixture state, and
+   all-stage containment evidence immediately before indexing;
+2. run the verified indexer against only the isolated read-only fixture;
+3. place `index.scip` inside the separate bounded output area;
+4. verify the locked Go `scip` bytes again, record its version, and render the
    index to JSON inside the run root;
-4. verify and run the locked `tooling/scip_convert.py` bytes with the isolated
+5. verify and run the locked `tooling/scip_convert.py` bytes with the isolated
    fixture as the declared root;
-5. verify and run the locked `tooling/validate.py` bytes against that same
+6. verify and run the locked `tooling/validate.py` bytes against that same
    fixture; and
-6. preserve the source commit and tree identity, Graphify revision, complete
-   run-lock digest, sandbox and mount evidence, exact argv and environment,
-   input/output digests, validation output, and resource measurements as one
-   run record.
+7. preserve the source commit/tree/object-closure identity, final fixture
+   manifest, Graphify revision, complete run-lock digest, sandbox, namespace,
+   process, network, mount, and resource-bound evidence, exact argv and
+   environment, input/output digests, validation output, and resource
+   measurements as one run record.
 
 No output filename, symbol count, graph fingerprint, module name, test name,
 descriptor shape, or coupling statistic from a protected corpus belongs in
@@ -141,10 +208,11 @@ this protocol.
 Before a public-fixture run, a separately lock-bound check may exercise the
 converter with a generated public synthetic index covering definitions,
 references, relationships, self-reference filtering, and local-symbol
-filtering. Require byte-identical output from file and standard-input paths and
-require the locked validator to pass. Synthetic success proves converter
-mechanics only; it does not validate an indexer, fixture, deployment profile,
-or broader corpus.
+filtering. That check and all descendants remain under the same all-stage
+containment and finite resource-bound requirements. Require byte-identical
+output from file and standard-input paths and require the locked validator to
+pass. Synthetic success proves converter mechanics only; it does not validate
+an indexer, fixture, deployment profile, or broader corpus.
 
 ## Success criteria
 
@@ -153,17 +221,20 @@ independently reviewable run records all of the following:
 
 1. the complete immutable execution gate passed with no omitted process or
    executable input;
-2. the exact source commit, symlink-free fixture, isolated empty destination,
-   credential-free sandbox, mount boundary, and network denial were verified;
-3. validation had no new fatal class, with warnings recorded rather than
+2. the complete local non-promisor source closure, exact source commit,
+   symlink-free fixture, pre-locked patch, complete final fixture manifest,
+   isolated empty destination, and read-only final fixture were verified;
+3. every stage and descendant remained in the credential-free network,
+   filesystem, process, privilege, and finite-resource boundary;
+4. validation had no new fatal class, with warnings recorded rather than
    silently accepted;
-4. repeated conversion of the same locked index was byte-identical;
-5. edge growth stayed below an operator-declared bound established from public
+5. repeated conversion of the same locked index was byte-identical;
+6. edge growth stayed below an operator-declared bound established from public
    fixture evidence;
-6. peak memory, latency, and throughput were measured on the deployment target
+7. peak memory, latency, and throughput were measured on the deployment target
    with the exact concurrency, thread, context, and measurement-boundary
    parameters recorded; and
-7. symbol-alias behavior was either normalized or explicitly bounded by a
+8. symbol-alias behavior was either normalized or explicitly bounded by a
    public-fixture baseline.
 
 Authority effect: none. This protocol does not authorize installation,

@@ -35,4 +35,5 @@ origin-unbound, missing, or incomplete lanes.
 ## Synthesis conclusion
 
 - Supported: <!-- positive-claim: SA-02 --> PostgreSQL full-text plus pgvector may be evaluated as a hybrid-search candidate.
+<!-- negative-boundary: BND-SA-CONCLUSION status=unsupported_or_unknown claims=SA-02 -->
 - Unsupported/unknown: Retrieval architecture, ranking, model selection, storage choice, and any PostgreSQL deployment remain open.

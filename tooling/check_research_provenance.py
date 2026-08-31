@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
 import re
@@ -28,6 +29,10 @@ LANE_RANGE_RE = re.compile(
     r"(?:\s*[–-]\s*L?(100|0?[1-9]|[1-9][0-9]))?\b"
 )
 MARKER_RE = re.compile(r"<!--\s*positive-claim:\s*([A-Z0-9-]+)\s*-->")
+BOUNDARY_MARKER_RE = re.compile(
+    r"<!--\s*negative-boundary:\s*([A-Z0-9-]+)\s+"
+    r"status=([a-z_]+)\s+claims=([A-Z0-9,-]+|none)\s*-->"
+)
 NORMALIZED_RAW_REFERENCE_RE = re.compile(
     r"(?i)(?:^|[^A-Za-z0-9_-])research"
     r"(?:[\\/]+(?:\.{1,2}|research))*[\\/]+raw(?:[\\/]|\b)"
@@ -44,8 +49,11 @@ CONSTRUCTED_RAW_REFERENCE_RE = re.compile(
             \s*,\s*["']raw["']
       | \b(?:join|joinpath)\s*\([^\n)]{0,160}["']research["']
             \s*,\s*["']raw["']
+      | \b(?:Path|PurePath)\(\s*["']research["']\s*\)
+            \.joinpath\(\s*["']raw["']\s*\)
+      | \b(?:Path|PurePath)\(\s*["']research["']\s*\)
+            \s*/\s*(?:Path|PurePath)\(\s*["']raw["']\s*\)
       | ["']research["']\s*/\s*["']raw["']
-      | ["']research["']\s*,\s*["']raw["']
       | ["']research["']\s*\+\s*["'][\\/]["']
             \s*\+\s*["']raw["']
       | ["']research["']\s*\+\s*["'][\\/]raw["']
@@ -61,11 +69,6 @@ CLAIM_MAP_REFERENCE_RE = re.compile(
     )''',
     re.VERBOSE,
 )
-NEGATIVE_BOUNDARY_RE = re.compile(
-    r"\b(?:no|not|unknown|open|unsupported|unvalidated|unavailable|"
-    r"unaccepted|remain|remains|requires?|cannot|none)\b",
-    re.IGNORECASE,
-)
 RESERVED_POSITIVE_SECTIONS = {
     "Evidence-bound experiment order",
     "Positive claims",
@@ -73,6 +76,11 @@ RESERVED_POSITIVE_SECTIONS = {
     "Synthesis conclusion",
 }
 NARRATIVE_SUFFIXES = {".md", ".rst", ".adoc"}
+BOUNDARY_STATUSES = {
+    "scope_limit",
+    "unsupported_or_unknown",
+    "no_supported_claim",
+}
 
 HISTORICAL_COMPATIBILITY: dict[int, tuple[str, str]] = {
     1: ("Stable federated node identity", "Stable federated node identity"),
@@ -195,19 +203,385 @@ def tracked_text_files() -> list[tuple[str, Path, str]]:
     return files
 
 
+UNKNOWN_PATH_COMPONENT = "<unknown>"
+MAX_PATH_CANDIDATES = 64
+
+
+def normalized_path_components(value: str) -> list[str]:
+    components: list[str] = []
+    for component in value.replace("\\", "/").split("/"):
+        if component in {"", "."}:
+            continue
+        if component == "..":
+            if components and components[-1] != UNKNOWN_PATH_COMPONENT:
+                components.pop()
+            continue
+        components.append(component.casefold())
+    return components
+
+
+def candidate_has_raw_path(value: str) -> bool:
+    components = normalized_path_components(value)
+    return any(
+        components[index:index + 2] == ["research", "raw"]
+        for index in range(max(0, len(components) - 1))
+    )
+
+
+def candidate_raw_lane_refs(value: str) -> set[str]:
+    components = normalized_path_components(value)
+    lanes: set[str] = set()
+    for index in range(max(0, len(components) - 2)):
+        if components[index:index + 2] != ["research", "raw"]:
+            continue
+        match = re.match(
+            r"(?i)^L(100|0?[1-9]|[1-9][0-9])(?:[-.]|$)",
+            components[index + 2],
+        )
+        if match:
+            lanes.add(canonical_lane(int(match.group(1))))
+    return lanes
+
+
+def join_candidate_groups(
+    groups: list[set[str]], separator: str
+) -> set[str]:
+    candidates = {""}
+    for group in groups:
+        options = group or {UNKNOWN_PATH_COMPONENT}
+        combined: set[str] = set()
+        for prefix in sorted(candidates):
+            for option in sorted(options):
+                if prefix and option:
+                    value = prefix + separator + option
+                else:
+                    value = prefix or option
+                if len(value) <= 4096:
+                    combined.add(value)
+                if len(combined) >= MAX_PATH_CANDIDATES:
+                    break
+            if len(combined) >= MAX_PATH_CANDIDATES:
+                break
+        candidates = combined
+    return candidates
+
+
+def dotted_name(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        parent = dotted_name(node.value)
+        return f"{parent}.{node.attr}" if parent else None
+    return None
+
+
+class PythonRawPathAnalyzer(ast.NodeVisitor):
+    """Small bounded dataflow evaluator for explicit path construction."""
+
+    def __init__(self, tree: ast.AST) -> None:
+        self.found = False
+        self.raw_lane_refs: set[str] = set()
+        self.environments: list[dict[str, set[str]]] = [{}]
+        self.sequences: list[dict[str, list[set[str]]]] = [{}]
+        self.mappings: list[dict[str, dict[str, set[str]]]] = [{}]
+        self.bound_joiners: list[dict[str, set[str]]] = [{}]
+        self.path_constructors = {"Path", "PurePath"}
+        self.pathlib_modules = {"pathlib"}
+        self.os_modules = {"os"}
+        self.path_modules = {"posixpath", "ntpath"}
+        self.join_functions: set[str] = set()
+        self.normalization_functions: set[str] = set()
+        self._collect_import_aliases(tree)
+
+    @property
+    def environment(self) -> dict[str, set[str]]:
+        return self.environments[-1]
+
+    @property
+    def sequence_environment(self) -> dict[str, list[set[str]]]:
+        return self.sequences[-1]
+
+    @property
+    def mapping_environment(self) -> dict[str, dict[str, set[str]]]:
+        return self.mappings[-1]
+
+    @property
+    def bound_join_environment(self) -> dict[str, set[str]]:
+        return self.bound_joiners[-1]
+
+    def _collect_import_aliases(self, tree: ast.AST) -> None:
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    local = alias.asname or alias.name.split(".")[0]
+                    if alias.name == "pathlib":
+                        self.pathlib_modules.add(local)
+                    elif alias.name == "os":
+                        self.os_modules.add(local)
+                    elif alias.name in {"os.path", "posixpath", "ntpath"}:
+                        self.path_modules.add(alias.asname or alias.name)
+            elif isinstance(node, ast.ImportFrom):
+                module = node.module or ""
+                for alias in node.names:
+                    local = alias.asname or alias.name
+                    if module == "pathlib" and alias.name in {"Path", "PurePath"}:
+                        self.path_constructors.add(local)
+                    elif module == "os" and alias.name == "path":
+                        self.path_modules.add(local)
+                    elif module in {"os.path", "posixpath", "ntpath"}:
+                        if alias.name == "join":
+                            self.join_functions.add(local)
+                        elif alias.name in {
+                            "normpath", "abspath", "realpath", "relpath"
+                        }:
+                            self.normalization_functions.add(local)
+
+    def _callable_kind(self, node: ast.AST) -> str | None:
+        name = dotted_name(node)
+        if name is None:
+            return None
+        if name in self.path_constructors:
+            return "constructor"
+        parts = name.split(".")
+        if (
+            len(parts) == 2
+            and parts[0] in self.pathlib_modules
+            and parts[1] in {"Path", "PurePath"}
+        ):
+            return "constructor"
+        if name in self.join_functions:
+            return "join"
+        if name in self.normalization_functions:
+            return "normalize"
+        if len(parts) >= 2 and parts[-1] == "join":
+            if parts[0] in self.path_modules:
+                return "join"
+            if len(parts) >= 3 and parts[0] in self.os_modules and parts[-2] == "path":
+                return "join"
+        if len(parts) >= 2 and parts[-1] in {
+            "normpath", "abspath", "realpath", "relpath"
+        }:
+            if parts[0] in self.path_modules:
+                return "normalize"
+            if len(parts) >= 3 and parts[0] in self.os_modules and parts[-2] == "path":
+                return "normalize"
+        return None
+
+    def _argument_groups(self, arguments: list[ast.AST]) -> list[set[str]]:
+        groups: list[set[str]] = []
+        for argument in arguments:
+            if (
+                isinstance(argument, ast.Starred)
+                and isinstance(argument.value, ast.Name)
+                and argument.value.id in self.sequence_environment
+            ):
+                groups.extend(self.sequence_environment[argument.value.id])
+            else:
+                groups.append(self._evaluate(argument))
+        return groups
+
+    def _evaluate(self, node: ast.AST | None) -> set[str]:
+        if node is None:
+            return set()
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return {node.value}
+        if isinstance(node, ast.Name):
+            return set(self.environment.get(node.id, set()))
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
+            key: str | int | None = None
+            if isinstance(node.slice, ast.Constant):
+                key = node.slice.value
+            if isinstance(key, str):
+                return set(
+                    self.mapping_environment.get(node.value.id, {}).get(key, set())
+                )
+            if isinstance(key, int):
+                sequence = self.sequence_environment.get(node.value.id, [])
+                if -len(sequence) <= key < len(sequence):
+                    return set(sequence[key])
+            return set()
+        if isinstance(node, ast.JoinedStr):
+            groups: list[set[str]] = []
+            for part in node.values:
+                if isinstance(part, ast.Constant) and isinstance(part.value, str):
+                    groups.append({part.value})
+                elif isinstance(part, ast.FormattedValue):
+                    groups.append(self._evaluate(part.value))
+            return join_candidate_groups(groups, "")
+        if isinstance(node, ast.IfExp):
+            return self._evaluate(node.body) | self._evaluate(node.orelse)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+            return join_candidate_groups(
+                [self._evaluate(node.left), self._evaluate(node.right)], "/"
+            )
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            return join_candidate_groups(
+                [self._evaluate(node.left), self._evaluate(node.right)], ""
+            )
+        if isinstance(node, ast.Call):
+            kind = self._callable_kind(node.func)
+            if kind == "constructor":
+                return join_candidate_groups(self._argument_groups(node.args), "/")
+            if kind == "join":
+                return join_candidate_groups(self._argument_groups(node.args), "/")
+            if kind == "normalize":
+                return self._evaluate(node.args[0]) if node.args else set()
+            if isinstance(node.func, ast.Name) and node.func.id in self.bound_join_environment:
+                return join_candidate_groups(
+                    [set(self.bound_join_environment[node.func.id])]
+                    + self._argument_groups(node.args),
+                    "/",
+                )
+            if isinstance(node.func, ast.Attribute):
+                if node.func.attr == "joinpath":
+                    return join_candidate_groups(
+                        [self._evaluate(node.func.value)]
+                        + self._argument_groups(node.args),
+                        "/",
+                    )
+                if node.func.attr in {"resolve", "absolute"}:
+                    return self._evaluate(node.func.value)
+        return set()
+
+    def _mark(self, values: set[str]) -> None:
+        for value in values:
+            if candidate_has_raw_path(value):
+                self.found = True
+                self.raw_lane_refs.update(candidate_raw_lane_refs(value))
+
+    def _bind_name(self, name: str, value_node: ast.AST, values: set[str]) -> None:
+        self.environment[name] = set(values)
+        self.sequence_environment.pop(name, None)
+        self.mapping_environment.pop(name, None)
+        self.bound_join_environment.pop(name, None)
+        self.path_constructors.discard(name)
+        self.join_functions.discard(name)
+        self.normalization_functions.discard(name)
+
+        if isinstance(value_node, (ast.List, ast.Tuple)):
+            self.sequence_environment[name] = [
+                self._evaluate(element) for element in value_node.elts
+            ]
+        elif isinstance(value_node, ast.Dict):
+            mapping: dict[str, set[str]] = {}
+            for key_node, item_node in zip(value_node.keys, value_node.values):
+                if isinstance(key_node, ast.Constant) and isinstance(key_node.value, str):
+                    mapping[key_node.value] = self._evaluate(item_node)
+            self.mapping_environment[name] = mapping
+
+        kind = self._callable_kind(value_node)
+        if kind == "constructor":
+            self.path_constructors.add(name)
+        elif kind == "join":
+            self.join_functions.add(name)
+        elif kind == "normalize":
+            self.normalization_functions.add(name)
+        elif isinstance(value_node, ast.Attribute) and value_node.attr == "joinpath":
+            self.bound_join_environment[name] = self._evaluate(value_node.value)
+
+    def _bind_target(self, target: ast.AST, value_node: ast.AST, values: set[str]) -> None:
+        if isinstance(target, ast.Name):
+            self._bind_name(target.id, value_node, values)
+        elif (
+            isinstance(target, (ast.Tuple, ast.List))
+            and isinstance(value_node, (ast.Tuple, ast.List))
+            and len(target.elts) == len(value_node.elts)
+        ):
+            for child_target, child_value in zip(target.elts, value_node.elts):
+                self._bind_target(child_target, child_value, self._evaluate(child_value))
+
+    def visit_Assign(self, node: ast.Assign) -> None:  # noqa: N802
+        values = self._evaluate(node.value)
+        self._mark(values)
+        for target in node.targets:
+            self._bind_target(target, node.value, values)
+        self.visit(node.value)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:  # noqa: N802
+        values = self._evaluate(node.value)
+        self._mark(values)
+        if node.value is not None:
+            self._bind_target(node.target, node.value, values)
+            self.visit(node.value)
+
+    def visit_NamedExpr(self, node: ast.NamedExpr) -> None:  # noqa: N802
+        values = self._evaluate(node.value)
+        self._mark(values)
+        self._bind_target(node.target, node.value, values)
+        self.visit(node.value)
+
+    def visit_Call(self, node: ast.Call) -> None:  # noqa: N802
+        self._mark(self._evaluate(node))
+        self.generic_visit(node)
+
+    def visit_BinOp(self, node: ast.BinOp) -> None:  # noqa: N802
+        self._mark(self._evaluate(node))
+        self.generic_visit(node)
+
+    def _visit_local_scope(self, body: list[ast.stmt]) -> None:
+        self.environments.append(dict(self.environment))
+        self.sequences.append(dict(self.sequence_environment))
+        self.mappings.append(dict(self.mapping_environment))
+        self.bound_joiners.append(dict(self.bound_join_environment))
+        try:
+            for statement in body:
+                self.visit(statement)
+        finally:
+            self.environments.pop()
+            self.sequences.pop()
+            self.mappings.pop()
+            self.bound_joiners.pop()
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # noqa: N802
+        for decorator in node.decorator_list:
+            self.visit(decorator)
+        for default in [*node.args.defaults, *node.args.kw_defaults]:
+            if default is not None:
+                self.visit(default)
+        self._visit_local_scope(node.body)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:  # noqa: N802
+        self.visit_FunctionDef(node)
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:  # noqa: N802
+        self._visit_local_scope(node.body)
+
+
+def python_raw_path_analysis(value: str) -> tuple[bool, set[str]]:
+    try:
+        tree = ast.parse(value)
+    except (SyntaxError, ValueError):
+        return False, set()
+    analyzer = PythonRawPathAnalyzer(tree)
+    analyzer.visit(tree)
+    return analyzer.found, analyzer.raw_lane_refs
+
+
+def python_contains_raw_path(value: str) -> bool:
+    return python_raw_path_analysis(value)[0]
+
+
 def contains_raw_source_reference(value: str) -> bool:
-    return bool(
+    if (
         NORMALIZED_RAW_REFERENCE_RE.search(value)
         or RAW_LANE_REFERENCE_RE.search(value)
         or CONSTRUCTED_RAW_REFERENCE_RE.search(value)
+    ):
+        return True
+    lowered = value.casefold()
+    return (
+        "research" in lowered
+        and "raw" in lowered
+        and python_contains_raw_path(value)
     )
 
 
 def literal_raw_lane_refs(value: str) -> set[str]:
-    return {
+    direct = {
         canonical_lane(int(match.group(1)))
         for match in RAW_LANE_REFERENCE_RE.finditer(value)
     }
+    return direct | python_raw_path_analysis(value)[1]
 
 
 def contains_claim_map_reference(value: str) -> bool:
@@ -262,11 +636,196 @@ def is_separator_row(cells: list[str]) -> bool:
     )
 
 
+def boundary_records_by_id(
+    manifest: dict[str, Any],
+    claims: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    raw_records = manifest.get("negative_boundaries")
+    require(isinstance(raw_records, list),
+            "claim map must contain a negative_boundaries list")
+    records: dict[str, dict[str, Any]] = {}
+    for record in raw_records:
+        require(isinstance(record, dict), "negative boundary record is not an object")
+        boundary_id = record.get("id")
+        require(
+            isinstance(boundary_id, str)
+            and re.fullmatch(r"BND-[A-Z0-9-]+", boundary_id) is not None,
+            f"invalid negative boundary ID: {boundary_id!r}",
+        )
+        require(boundary_id not in records,
+                f"duplicate negative boundary ID: {boundary_id}")
+        require(record.get("form") in {"paragraph", "conclusion"},
+                f"{boundary_id} has an unsupported boundary form")
+        status = record.get("status")
+        require(status in BOUNDARY_STATUSES,
+                f"{boundary_id} has an unsupported status: {status!r}")
+        claim_ids = record.get("claim_ids")
+        require(
+            isinstance(claim_ids, list)
+            and len(claim_ids) == len(set(claim_ids)),
+            f"{boundary_id} claim_ids must be a unique list",
+        )
+        for claim_id in claim_ids:
+            require(claim_id in claims,
+                    f"{boundary_id} names unknown positive claim {claim_id}")
+            require(claims[claim_id]["consumer"] == record.get("consumer"),
+                    f"{boundary_id} claim {claim_id} has another consumer")
+            require(claims[claim_id]["section"] == record.get("section"),
+                    f"{boundary_id} claim {claim_id} has another section")
+        require(
+            status != "no_supported_claim" or not claim_ids,
+            f"{boundary_id} no_supported_claim status cannot name claims",
+        )
+        require(
+            record.get("form") != "conclusion"
+            or status == "unsupported_or_unknown",
+            f"{boundary_id} conclusion boundary has the wrong status",
+        )
+        statement = record.get("statement")
+        require(
+            isinstance(statement, str)
+            and statement.strip() == statement
+            and statement
+            and "\n" not in statement,
+            f"{boundary_id} statement must be one canonical logical line",
+        )
+        require(isinstance(record.get("consumer"), str),
+                f"{boundary_id} has no consumer")
+        require(isinstance(record.get("section"), str),
+                f"{boundary_id} has no section")
+        records[boundary_id] = record
+    return records
+
+
+def parse_boundary_claim_ids(value: str) -> list[str]:
+    return [] if value == "none" else value.split(",")
+
+
+def parse_negative_boundary_blocks(
+    relative: str,
+    text: str,
+    records: dict[str, dict[str, Any]],
+) -> tuple[Counter[str], dict[int, str]]:
+    lines = text.splitlines()
+    expected = {
+        boundary_id: record
+        for boundary_id, record in records.items()
+        if record["consumer"] == relative
+    }
+    observed: Counter[str] = Counter()
+    covered_lines: dict[int, str] = {}
+    section: str | None = None
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        heading = re.match(r"^## (.+)$", line)
+        if heading:
+            section = heading.group(1).strip()
+            index += 1
+            continue
+        if "negative-boundary:" not in line:
+            index += 1
+            continue
+
+        marker = BOUNDARY_MARKER_RE.fullmatch(line)
+        require(marker is not None,
+                f"{relative}:{index + 1} has a malformed boundary marker")
+        boundary_id, status, marker_claims = marker.groups()
+        require(boundary_id in expected,
+                f"{relative}:{index + 1} has unregistered boundary {boundary_id}")
+        record = expected[boundary_id]
+        require(section == record["section"],
+                f"{boundary_id} appears in section {section!r}, "
+                f"expected {record['section']!r}")
+        require(status == record["status"],
+                f"{boundary_id} marker status differs from claim map")
+        require(parse_boundary_claim_ids(marker_claims) == record["claim_ids"],
+                f"{boundary_id} marker claim IDs differ from claim map")
+        observed[boundary_id] += 1
+        covered_lines[index + 1] = boundary_id
+
+        block_index = index + 1
+        require(block_index < len(lines) and lines[block_index].strip(),
+                f"{boundary_id} has no governed block")
+        logical_lines: list[str] = []
+        if record["form"] == "conclusion":
+            prefix = "- Unsupported/unknown: "
+            require(lines[block_index].startswith(prefix),
+                    f"{boundary_id} conclusion block lacks its exact prefix")
+            logical_lines.append(lines[block_index].removeprefix(prefix).strip())
+            covered_lines[block_index + 1] = boundary_id
+            block_index += 1
+            while block_index < len(lines):
+                continuation = lines[block_index]
+                if (
+                    not continuation.strip()
+                    or re.match(r"^## ", continuation)
+                    or "negative-boundary:" in continuation
+                ):
+                    break
+                logical_lines.append(continuation.strip())
+                covered_lines[block_index + 1] = boundary_id
+                block_index += 1
+        else:
+            while block_index < len(lines):
+                continuation = lines[block_index]
+                if (
+                    not continuation.strip()
+                    or continuation.startswith("|")
+                    or re.match(r"^## ", continuation)
+                    or "negative-boundary:" in continuation
+                ):
+                    break
+                require(not continuation.startswith("- Supported: "),
+                        f"{boundary_id} paragraph contains a positive claim line")
+                logical_lines.append(continuation.strip())
+                covered_lines[block_index + 1] = boundary_id
+                block_index += 1
+
+        require(" ".join(logical_lines) == record["statement"],
+                f"{boundary_id} complete block differs from claim map")
+        index = block_index
+    return observed, covered_lines
+
+
+def validate_positive_section_structure(
+    relative: str,
+    text: str,
+    sections: set[str],
+    covered_lines: dict[int, str],
+) -> None:
+    section: str | None = None
+    seen_sections: set[str] = set()
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        heading = re.match(r"^## (.+)$", line)
+        if heading:
+            section = heading.group(1).strip()
+            if section in sections:
+                seen_sections.add(section)
+            continue
+        if section not in sections or not line.strip():
+            continue
+        if line_number in covered_lines:
+            continue
+        require(line.startswith("|"),
+                f"{relative}:{line_number} ungoverned positive-section prose")
+        cells = markdown_cells(line)
+        if is_separator_row(cells) or cells[0] in {"Order", "Supported statement"}:
+            continue
+        require(MARKER_RE.search(line) is not None,
+                f"{relative}:{line_number} positive row lacks a claim marker")
+    require(seen_sections == sections,
+            f"{relative} positive sections differ: "
+            f"missing={sorted(sections - seen_sections)}")
+
+
 def validate_governed_conclusion(
     relative: str,
     text: str,
     section_name: str,
     claims: dict[str, dict[str, Any]],
+    records: dict[str, dict[str, Any]],
+    covered_lines: dict[int, str],
 ) -> None:
     body: list[tuple[int, str]] = []
     in_section = False
@@ -291,12 +850,34 @@ def validate_governed_conclusion(
         and claim["section"] == section_name
         and claim.get("form", "table_row") == "prose"
     }
+    conclusion_records = {
+        boundary_id: record
+        for boundary_id, record in records.items()
+        if record["consumer"] == relative
+        and record["section"] == section_name
+        and record["form"] == "conclusion"
+    }
+    require(len(conclusion_records) == 1,
+            f"{relative} conclusion must have exactly one boundary record")
+    bound_claims = {
+        claim_id
+        for record in conclusion_records.values()
+        for claim_id in record["claim_ids"]
+    }
+    require(bound_claims == expected_claims,
+            f"{relative} conclusion boundary claim IDs differ: "
+            f"missing={sorted(expected_claims - bound_claims)} "
+            f"extra={sorted(bound_claims - expected_claims)}")
+
     observed_claims: set[str] = set()
+    observed_boundaries: set[str] = set()
     supported_lines = 0
-    boundary_lines = 0
     supported_none = False
     for line_number, line in body:
         if not line.strip():
+            continue
+        if line_number in covered_lines:
+            observed_boundaries.add(covered_lines[line_number])
             continue
         if line == "- Supported: none.":
             supported_lines += 1
@@ -323,23 +904,14 @@ def validate_governed_conclusion(
                     f"{claim_id} conclusion statement differs from claim map")
             observed_claims.add(claim_id)
             continue
-        if line.startswith("- Unsupported/unknown: "):
-            boundary_lines += 1
-            require(MARKER_RE.search(line) is None,
-                    f"{relative}:{line_number} boundary carries a claim marker")
-            boundary = line.removeprefix("- Unsupported/unknown: ")
-            require(NEGATIVE_BOUNDARY_RE.search(boundary) is not None,
-                    f"{relative}:{line_number} boundary lacks negative or "
-                    "unknown semantics")
-            continue
         raise CheckFailure(
             f"{relative}:{line_number} ungoverned conclusion prose: {line!r}"
         )
 
     require(supported_lines == 1,
             f"{relative} conclusion must have exactly one Supported line")
-    require(boundary_lines >= 1,
-            f"{relative} conclusion must retain an Unsupported/unknown boundary")
+    require(observed_boundaries == set(conclusion_records),
+            f"{relative} conclusion boundary coverage differs")
     require(not (supported_none and observed_claims),
             f"{relative} conclusion mixes Supported:none with positive claims")
     require(observed_claims == expected_claims,
@@ -349,6 +921,7 @@ def validate_governed_conclusion(
 
 
 def validate_scip_contract(pilot: str, requirements: str) -> None:
+    normalized_pilot = " ".join(pilot.split())
     for required in (
         "Protocol state: unexecutable",
         "exact Graphify tool revision",
@@ -367,12 +940,35 @@ def validate_scip_contract(pilot: str, requirements: str) -> None:
         "must not be a host bind mount",
         "mount table",
         "Network access must be denied",
+        "Every pilot stage and every descendant",
+        "complete local, non-promisor",
+        "any lazy fetch path",
+        "Use a private process namespace",
+        "Deny the host `/proc`",
+        "Drop every capability",
+        "no-new-privileges",
+        "PID-count, CPU-time, memory, output-file-size",
+        "pre-locked patch",
+        "complete expected post-patch fixture manifest",
+        "every final relative path with its entry type, mode, byte count, and cryptographic digest",
+        "immediately before indexing",
+        "read-only immutable snapshot",
         "Authority effect: none",
     ):
-        require(required in pilot, f"SCIP protocol lacks required gate: {required}")
+        require(required in normalized_pilot,
+                f"SCIP protocol lacks required gate: {required}")
     normalized_requirements = re.sub(r"\n#[ \t]?", " ", requirements)
     require("leaves the protocol unexecutable" in normalized_requirements,
             "SCIP requirements do not fail closed on an incomplete run lock")
+    for required in (
+        "complete local non-promisor source-object closure",
+        "pre-locked fixture patch",
+        "complete expected final fixture manifest",
+        "all-stage sandbox/network/mount/process/privilege",
+        "finite resource-bound configuration for every descendant",
+    ):
+        require(required in normalized_requirements,
+                f"SCIP requirements lack required gate: {required}")
 
     combined = pilot + "\n" + requirements
     prohibited = {
@@ -596,6 +1192,39 @@ def check_allowlist(manifest: dict[str, Any], rows: dict[str, dict[str, str]]) -
                 f"{lane} reciprocal claim IDs differ: "
                 f"map={entry['claim_ids']} claims={sorted(reciprocal[lane])}")
 
+    boundary_records = boundary_records_by_id(manifest, claims)
+    boundary_consumers = {
+        record["consumer"] for record in boundary_records.values()
+    }
+    marker_consumers: set[str] = set()
+    for path in ROOT.rglob("*.md"):
+        if ".git" in path.parts:
+            continue
+        if "negative-boundary:" in path.read_text(encoding="utf-8"):
+            marker_consumers.add(path.relative_to(ROOT).as_posix())
+    require(marker_consumers.issubset(boundary_consumers),
+            f"unregistered boundary marker consumers: "
+            f"{sorted(marker_consumers - boundary_consumers)}")
+
+    found_boundaries: Counter[str] = Counter()
+    boundary_coverage: dict[str, dict[int, str]] = {}
+    for relative in sorted(boundary_consumers):
+        path = ROOT / relative
+        require(path.is_file(), f"negative boundary consumer missing: {relative}")
+        observed, covered = parse_negative_boundary_blocks(
+            relative,
+            path.read_text(encoding="utf-8"),
+            boundary_records,
+        )
+        found_boundaries.update(observed)
+        boundary_coverage[relative] = covered
+    require(set(found_boundaries) == set(boundary_records),
+            f"negative boundary markers differ: "
+            f"missing={sorted(set(boundary_records) - set(found_boundaries))} "
+            f"extra={sorted(set(found_boundaries) - set(boundary_records))}")
+    require(all(count == 1 for count in found_boundaries.values()),
+            f"negative boundary markers are not unique: {dict(found_boundaries)}")
+
     found: Counter[str] = Counter()
     positive_sections = {
         path: set(sections)
@@ -670,46 +1299,12 @@ def check_allowlist(manifest: dict[str, Any], rows: dict[str, dict[str, str]]) -
     for relative, sections in positive_sections.items():
         path = ROOT / relative
         require(path.is_file(), f"positive consumer missing: {relative}")
-        section: str | None = None
-        seen_sections: set[str] = set()
-        negative_prose_open = False
-        for line_number, line in enumerate(
-            path.read_text(encoding="utf-8").splitlines(), start=1
-        ):
-            heading = re.match(r"^## (.+)$", line)
-            if heading:
-                negative_prose_open = False
-                section = heading.group(1).strip()
-                if section in sections:
-                    seen_sections.add(section)
-                continue
-            if section not in sections:
-                continue
-            if not line.strip():
-                negative_prose_open = False
-                continue
-            if not line.startswith("|"):
-                require(MARKER_RE.search(line) is None,
-                        f"{relative}:{line_number} positive-section prose "
-                        "cannot carry a table-row claim marker")
-                if not negative_prose_open:
-                    require(NEGATIVE_BOUNDARY_RE.search(line) is not None,
-                            f"{relative}:{line_number} unmarked "
-                            "positive-section prose is not an explicit "
-                            "negative boundary")
-                    negative_prose_open = True
-                continue
-            negative_prose_open = False
-            cells = markdown_cells(line)
-            if is_separator_row(cells):
-                continue
-            if cells[0] in {"Order", "Supported statement"}:
-                continue
-            require(MARKER_RE.search(line) is not None,
-                    f"{relative}:{line_number} positive row lacks a claim marker")
-        require(seen_sections == sections,
-                f"{relative} positive sections differ: "
-                f"missing={sorted(sections - seen_sections)}")
+        validate_positive_section_structure(
+            relative,
+            path.read_text(encoding="utf-8"),
+            sections,
+            boundary_coverage.get(relative, {}),
+        )
 
     for relative, section_name in governed_conclusions.items():
         validate_governed_conclusion(
@@ -717,6 +1312,8 @@ def check_allowlist(manifest: dict[str, Any], rows: dict[str, dict[str, str]]) -
             (ROOT / relative).read_text(encoding="utf-8"),
             section_name,
             claims,
+            boundary_records,
+            boundary_coverage.get(relative, {}),
         )
 
     approved_raw_consumers = set(manifest["raw_consumer_files"])
@@ -756,7 +1353,8 @@ def check_allowlist(manifest: dict[str, Any], rows: dict[str, dict[str, str]]) -
     return (
         f"claims={len(claims)} lanes={len(allowlisted)} "
         f"raw_consumers={len(observed_raw_consumers)} "
-        f"raw_references={len(observed_raw_references)}"
+        f"raw_references={len(observed_raw_references)} "
+        f"negative_boundaries={len(boundary_records)}"
     )
 
 
@@ -961,7 +1559,7 @@ def check_public_safety(_: dict[str, Any], __: dict[str, dict[str, str]]) -> str
         require(required in l40 + l42,
                 f"L40/L42 lacks parameterized measurement boundary: {required}")
     return (
-        "scip_protocol=unexecutable_complete_lock_sandbox_required "
+        "scip_protocol=unexecutable_all_stage_complete_source_final_fixture "
         "l40_l42=parameterized"
     )
 
@@ -988,37 +1586,206 @@ def self_test() -> None:
             "lanes": ["L20"],
         }
     }
-    validate_governed_conclusion(
-        "research/synthesis/test.md",
+    test_boundary_records = {
+        "BND-TEST-CONCLUSION": {
+            "id": "BND-TEST-CONCLUSION",
+            "consumer": "research/synthesis/test.md",
+            "section": "Synthesis conclusion",
+            "form": "conclusion",
+            "status": "unsupported_or_unknown",
+            "claim_ids": ["SA-99"],
+            "statement": "All other conclusions are unsupported.",
+        },
+        "BND-TEST-NONE": {
+            "id": "BND-TEST-NONE",
+            "consumer": "research/synthesis/test.md",
+            "section": "Supported synthesis",
+            "form": "paragraph",
+            "status": "no_supported_claim",
+            "claim_ids": [],
+            "statement": "No additional claim is supported.",
+        },
+    }
+    conclusion_text = (
         "## Synthesis conclusion\n\n"
         "- Supported: <!-- positive-claim: SA-99 --> One bounded claim is supported.\n"
-        "- Unsupported/unknown: All other conclusions remain open.\n",
+        "<!-- negative-boundary: BND-TEST-CONCLUSION "
+        "status=unsupported_or_unknown claims=SA-99 -->\n"
+        "- Unsupported/unknown: All other conclusions are unsupported.\n"
+    )
+    _, conclusion_coverage = parse_negative_boundary_blocks(
+        "research/synthesis/test.md",
+        conclusion_text,
+        test_boundary_records,
+    )
+    validate_governed_conclusion(
+        "research/synthesis/test.md",
+        conclusion_text,
         "Synthesis conclusion",
         conclusion_claims,
+        test_boundary_records,
+        conclusion_coverage,
+    )
+
+    unmarked_conclusion = (
+        "## Synthesis conclusion\n\n"
+        "- Supported: One unregistered positive claim.\n"
+        "<!-- negative-boundary: BND-TEST-CONCLUSION "
+        "status=unsupported_or_unknown claims=SA-99 -->\n"
+        "- Unsupported/unknown: All other conclusions are unsupported.\n"
+    )
+    _, unmarked_coverage = parse_negative_boundary_blocks(
+        "research/synthesis/test.md",
+        unmarked_conclusion,
+        test_boundary_records,
     )
     expect_failure(
         lambda: validate_governed_conclusion(
             "research/synthesis/test.md",
-            "## Synthesis conclusion\n\n"
-            "- Supported: One unregistered positive claim.\n"
-            "- Unsupported/unknown: All other conclusions remain open.\n",
+            unmarked_conclusion,
             "Synthesis conclusion",
             conclusion_claims,
+            test_boundary_records,
+            unmarked_coverage,
         ),
         "unmarked positive conclusion",
+    )
+
+    positive_section_text = (
+        "## Supported synthesis\n\n"
+        "<!-- negative-boundary: BND-TEST-NONE "
+        "status=no_supported_claim claims=none -->\n"
+        "No additional claim is supported.\n"
+    )
+    _, positive_coverage = parse_negative_boundary_blocks(
+        "research/synthesis/test.md",
+        positive_section_text,
+        test_boundary_records,
+    )
+    validate_positive_section_structure(
+        "research/synthesis/test.md",
+        positive_section_text,
+        {"Supported synthesis"},
+        positive_coverage,
+    )
+    expect_failure(
+        lambda: parse_negative_boundary_blocks(
+            "research/synthesis/test.md",
+            positive_section_text.replace(
+                "No additional claim is supported.",
+                "Splink remains the production-ready supported choice.",
+            ),
+            test_boundary_records,
+        ),
+        "positive prose laundered as a negative boundary",
+    )
+    expect_failure(
+        lambda: parse_negative_boundary_blocks(
+            "research/synthesis/test.md",
+            positive_section_text.replace(
+                "No additional claim is supported.\n",
+                "No additional claim is supported.\n"
+                "Splink is the production-ready supported choice.\n",
+            ),
+            test_boundary_records,
+        ),
+        "unchecked multiline boundary continuation",
+    )
+    expect_failure(
+        lambda: validate_positive_section_structure(
+            "research/synthesis/test.md",
+            "## Supported synthesis\n\n"
+            "Splink remains the production-ready supported choice.\n",
+            {"Supported synthesis"},
+            {},
+        ),
+        "unmarked positive-section prose",
+    )
+    expect_failure(
+        lambda: parse_negative_boundary_blocks(
+            "research/synthesis/test.md",
+            positive_section_text.replace(
+                "status=no_supported_claim", "status=scope_limit"
+            ),
+            test_boundary_records,
+        ),
+        "boundary status variance",
+    )
+    expect_failure(
+        lambda: parse_negative_boundary_blocks(
+            "research/synthesis/test.md",
+            positive_section_text.replace("claims=none", "claims=SA-99"),
+            test_boundary_records,
+        ),
+        "boundary claim-ID variance",
     )
 
     raw_reference_cases = {
         "extensionless constructed path": 'fixture = Path("research") / "raw"',
         "service normalized path": "Environment=INPUT=research/./raw/L20-item.md",
-        "config component list": 'parts = ["research", "raw"]',
-        "indirect join": 'root = os.path.join(BASE, "research", "raw")',
+        "pathlib joinpath": 'Path("research").joinpath("raw")',
+        "Path operand": 'Path("research") / Path("raw")',
+        "two-step named components": (
+            'base = "research"\nleaf = "raw"\nroot = Path(base) / leaf'
+        ),
+        "pathlib import alias": (
+            'from pathlib import Path as P\nbase = "research"\n'
+            'leaf = "raw"\nroot = P(base).joinpath(leaf)'
+        ),
+        "indirect os.path join": (
+            'base = "research"\nleaf = "raw"\n'
+            'root = os.path.join(ROOT, base, leaf)'
+        ),
+        "os.path module alias": (
+            'import os.path as osp\nbase = "research"\nleaf = "raw"\n'
+            'root = osp.join(base, leaf)'
+        ),
+        "imported join alias": (
+            'from os.path import join as combine, normpath as clean\n'
+            'base = "research"\nleaf = "raw"\n'
+            'root = clean(combine(base, leaf))'
+        ),
+        "constructor alias": (
+            'from pathlib import Path\nBuilder = Path\n'
+            'base = "research"\nleaf = "raw"\nroot = Builder(base) / leaf'
+        ),
+        "mapping components": (
+            'parts = {"base": "research", "leaf": "raw"}\n'
+            'root = Path(parts["base"]) / parts["leaf"]'
+        ),
+        "bound joinpath alias": (
+            'base = Path("research")\nappend = base.joinpath\nroot = append("raw")'
+        ),
+        "starred component sequence": (
+            'parts = ["research", "raw"]\nroot = Path(*parts)'
+        ),
+        "tuple-unpacked components": (
+            'base, leaf = "research", "raw"\nroot = Path(base) / leaf'
+        ),
         "normalized parent path": "research/../research/raw/L20-item.md",
         "multi-argument path": 'Path(ROOT, "research", "raw")',
     }
     for label, value in raw_reference_cases.items():
         require(contains_raw_source_reference(value),
                 f"raw reference detector missed {label}")
+    raw_false_positive_cases = {
+        "uncomposed list": 'labels = ["research", "raw"]',
+        "separate named values": 'subject = "research"\nquality = "raw"',
+        "descriptive text": 'note = "research and raw are separate labels"',
+        "reassigned constructor alias": (
+            'from pathlib import Path\nBuilder = Path\nBuilder = print\n'
+            'root = Builder("research", "raw")'
+        ),
+    }
+    for label, value in raw_false_positive_cases.items():
+        require(not contains_raw_source_reference(value),
+                f"raw reference detector produced false positive for {label}")
+    require(
+        literal_raw_lane_refs(
+            'candidate = Path("research") / "raw" / "L01-private.md"'
+        ) == {"L01"},
+        "constructed raw lane extraction self-test failed",
+    )
     for filename in ("runner", "pilot.service", "research.conf"):
         require(raw_reference_role(Path(filename)) == "consumer",
                 f"raw reference role missed alternate format {filename}")
@@ -1065,6 +1832,67 @@ def self_test() -> None:
         ),
         "runnable shell path",
     )
+    expect_failure(
+        lambda: validate_scip_contract(
+            pilot.replace(
+                "Every pilot stage and\nevery descendant",
+                "Only selected stages and descendants",
+            ),
+            requirements,
+        ),
+        "pre-indexer stage outside containment",
+    )
+    expect_failure(
+        lambda: validate_scip_contract(
+            pilot.replace("complete local, non-promisor", "possibly remote source"),
+            requirements,
+        ),
+        "promisor or lazy source input",
+    )
+    expect_failure(
+        lambda: validate_scip_contract(
+            pilot.replace("Deny the host `/proc`", "Expose the host `/proc`"),
+            requirements,
+        ),
+        "host process namespace exposure",
+    )
+    expect_failure(
+        lambda: validate_scip_contract(
+            pilot.replace("no-new-privileges", "privilege policy unspecified"),
+            requirements,
+        ),
+        "missing no-new-privileges policy",
+    )
+    expect_failure(
+        lambda: validate_scip_contract(
+            pilot.replace("PID-count", "unbounded-process-count"),
+            requirements,
+        ),
+        "missing finite process/resource bounds",
+    )
+    expect_failure(
+        lambda: validate_scip_contract(
+            pilot.replace("pre-locked patch", "operator-time patch"),
+            requirements,
+        ),
+        "unlocked fixture preparation",
+    )
+    expect_failure(
+        lambda: validate_scip_contract(
+            pilot.replace(
+                "every final relative\npath", "selected final\npaths"
+            ),
+            requirements,
+        ),
+        "incomplete final fixture manifest",
+    )
+    expect_failure(
+        lambda: validate_scip_contract(
+            pilot.replace("immediately before indexing", "at an earlier time"),
+            requirements,
+        ),
+        "stale final fixture verification",
+    )
 
 
 def main(argv: list[str]) -> int:
@@ -1081,7 +1909,10 @@ def main(argv: list[str]) -> int:
         except CheckFailure as error:
             print(f"FAIL GSR-SELF-TEST {error}", file=sys.stderr)
             return 1
-        print("PASS GSR-SELF-TEST parser_cases=4 adversarial_cases=15")
+        print(
+            "PASS GSR-SELF-TEST parser_cases=4 boundary_adversarial=6 "
+            "raw_path_adversarial=24 scip_adversarial=13"
+        )
         return 0
 
     try:

@@ -61,6 +61,7 @@ for every excluded row.
 
 ## Evidence-bound experiment order
 
+<!-- negative-boundary: BND-EXP-SCOPE status=scope_limit claims=EXP-01,EXP-02,EXP-03,EXP-04,EXP-05,EXP-06,EXP-07,EXP-08,EXP-09 -->
 This order is a dependency-aware research sequence, not an adoption or deployment decision.
 
 | Order | Candidate experiment | Validated support | Required gate |
@@ -75,6 +76,7 @@ This order is a dependency-aware research sequence, not an adoption or deploymen
 | 8 | <!-- positive-claim: EXP-08 --> Evaluate token-budgeted traversal. | L86 | Retained-evidence coverage and fixed token-budget tests. |
 | 9 | <!-- positive-claim: EXP-09 --> Evaluate frontmatter query behavior without adding a persistence claim. | L93 | Public note fixtures, schema variance tests, and bounded query results. |
 
+<!-- negative-boundary: BND-EXP-EXCLUSIONS status=unsupported_or_unknown claims=EXP-01,EXP-02,EXP-03,EXP-04,EXP-05,EXP-06,EXP-07,EXP-08,EXP-09 -->
 Excluded lanes cannot advance an experiment. L60, L66, and L99 contain
 qualified public-source material but are not consumed and do not advance this
 order. The 46 inherited mixed-context lanes above are also excluded and do not

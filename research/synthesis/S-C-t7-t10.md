@@ -44,4 +44,5 @@ latency budgets, the L69 A/B protocol, or judge-bias mitigation.
 ## Synthesis conclusion
 
 - Supported: <!-- positive-claim: SC-04 --> Public-source support is limited to a public-fixture storage comparison, a bounded read-only query-surface experiment, and a BEIR-based evaluation harness.
+<!-- negative-boundary: BND-SC-CONCLUSION status=unsupported_or_unknown claims=SC-04 -->
 - Unsupported/unknown: Storage, routing, interface, and evaluation-policy selections remain open.

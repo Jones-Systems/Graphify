@@ -54,6 +54,80 @@
     "research/synthesis/S-D-t11-t14.md": "Synthesis conclusion",
     "research/synthesis/S-E-t15-crosscutting.md": "Synthesis conclusion"
   },
+  "negative_boundaries": [
+    {
+      "id": "BND-EXP-SCOPE",
+      "consumer": "research/RANKING.md",
+      "section": "Evidence-bound experiment order",
+      "form": "paragraph",
+      "status": "scope_limit",
+      "claim_ids": ["EXP-01", "EXP-02", "EXP-03", "EXP-04", "EXP-05", "EXP-06", "EXP-07", "EXP-08", "EXP-09"],
+      "statement": "This order is a dependency-aware research sequence, not an adoption or deployment decision."
+    },
+    {
+      "id": "BND-EXP-EXCLUSIONS",
+      "consumer": "research/RANKING.md",
+      "section": "Evidence-bound experiment order",
+      "form": "paragraph",
+      "status": "unsupported_or_unknown",
+      "claim_ids": ["EXP-01", "EXP-02", "EXP-03", "EXP-04", "EXP-05", "EXP-06", "EXP-07", "EXP-08", "EXP-09"],
+      "statement": "Excluded lanes cannot advance an experiment. L60, L66, and L99 contain qualified public-source material but are not consumed and do not advance this order. The 46 inherited mixed-context lanes above are also excluded and do not advance it. The corpus does not support a reranker survey (L21), canonical L58 or L59 conclusions, the L69 A/B protocol, L70 judge-bias conclusions, canonical L74, or canonical L100."
+    },
+    {
+      "id": "BND-SA-CONCLUSION",
+      "consumer": "research/synthesis/S-A-t1-t3.md",
+      "section": "Synthesis conclusion",
+      "form": "conclusion",
+      "status": "unsupported_or_unknown",
+      "claim_ids": ["SA-02"],
+      "statement": "Retrieval architecture, ranking, model selection, storage choice, and any PostgreSQL deployment remain open."
+    },
+    {
+      "id": "BND-SB-CONCLUSION",
+      "consumer": "research/synthesis/S-B-t4-t6.md",
+      "section": "Synthesis conclusion",
+      "form": "conclusion",
+      "status": "unsupported_or_unknown",
+      "claim_ids": ["SB-04"],
+      "statement": "No identifier-governance scheme, dependency extractor, SCIP pipeline, model, or deployment profile is accepted as ready."
+    },
+    {
+      "id": "BND-SC-CONCLUSION",
+      "consumer": "research/synthesis/S-C-t7-t10.md",
+      "section": "Synthesis conclusion",
+      "form": "conclusion",
+      "status": "unsupported_or_unknown",
+      "claim_ids": ["SC-04"],
+      "statement": "Storage, routing, interface, and evaluation-policy selections remain open."
+    },
+    {
+      "id": "BND-SD-CONCLUSION",
+      "consumer": "research/synthesis/S-D-t11-t14.md",
+      "section": "Synthesis conclusion",
+      "form": "conclusion",
+      "status": "unsupported_or_unknown",
+      "claim_ids": ["SD-05"],
+      "statement": "A durable federation, refresh, context-assembly, or vault architecture is not established."
+    },
+    {
+      "id": "BND-SE-SUPPORTED",
+      "consumer": "research/synthesis/S-E-t15-crosscutting.md",
+      "section": "Supported synthesis",
+      "form": "paragraph",
+      "status": "no_supported_claim",
+      "claim_ids": [],
+      "statement": "No supported synthesis statement remains in this lane range."
+    },
+    {
+      "id": "BND-SE-CONCLUSION",
+      "consumer": "research/synthesis/S-E-t15-crosscutting.md",
+      "section": "Synthesis conclusion",
+      "form": "conclusion",
+      "status": "unsupported_or_unknown",
+      "claim_ids": [],
+      "statement": "This range supplies no validated, consumed conclusion; static and generative reranking, learned usage signals, and centrality priors all remain unsupported or unknown for this candidate."
+    }
+  ],
   "raw_consumer_files": [],
   "raw_reference_files": ["research/RANKING.md"],
   "allowlisted_lanes": {

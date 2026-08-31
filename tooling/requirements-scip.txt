@@ -40,6 +40,9 @@ verified = GitHub release-assets API `digest` field AND local sha256sum of the
 # distribution; this Go CLI; and the shell, sandbox launcher, and every other
 # control-plane binary, including their loader/library/plugin/helper runtime
 # closure. Each input needs the exact identity required by docs/SCIP-PILOT.md.
-# The lock must also bind argv, environment, sandbox/mount configuration,
-# network denial, and its own digest. Missing or mismatched evidence leaves the
-# protocol unexecutable; execution remains blocked.
+# The lock must also bind a complete local non-promisor source-object closure,
+# any pre-locked fixture patch, the complete expected final fixture manifest,
+# argv, environment, and all-stage sandbox/network/mount/process/privilege and
+# finite resource-bound configuration for every descendant. Missing or
+# mismatched evidence leaves the protocol unexecutable; execution remains
+# blocked.
