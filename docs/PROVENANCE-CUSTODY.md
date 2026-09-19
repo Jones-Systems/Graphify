@@ -183,6 +183,18 @@ passed for normal replacement, unowned preservation, symlink-escape rejection,
 and both present and missing non-inventory sources. Exact-candidate full checks
 and renewed independent review remain required.
 
+Renewed review closed the inventory finding but kept
+`GSR-SEC-FINAL-04` open because deletion re-resolved previously checked path
+names, and opened `GSR-FCR-05` / `GSR-SEC-FINAL-05` (P2) because a FIFO owner
+marker could block before type validation. Checkpoint
+`f228cdcf09ff83899a4e17440c7c37c35249b4f9` traverses and pins every staging
+ancestor with no-follow directory descriptors, verifies the owner marker
+relative to the pinned parent with a nonblocking bounded read, and deletes the
+exact `view` entry relative to that same descriptor. Cleanup-owned focused
+fixtures passed for descriptor-relative replacement, FIFO rejection, and
+symlink containment. Exact-candidate full checks and renewed independent review
+remain required.
+
 ## Stop And Recovery Boundaries
 
 Stop the affected mutation on source drift, an active or unknown writer,
