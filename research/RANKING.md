@@ -18,6 +18,13 @@
   inputs, and 5 missing inputs.
 - A filename count is not an artifact-validity count. This document makes no research-complete or corpus-complete claim.
 - Immutable origins for L13 and L19 remain unknown.
+- L29's `tree-sitter/stack-graphs` 404 observations apply only to the attempted
+  endpoints recorded there. L78 identifies `github/stack-graphs` as the
+  canonical repository and records its archive state; the two repository
+  owners must not be treated as interchangeable source identifiers.
+- L42's early “Policy derived” sentence is retained as historical raw-lane
+  wording, not an adopted default. Its final verdict and the registered claims
+  limit Q4_K_M, Q5_K_M, and Q8_0 to parameterized experiment candidates.
 
 Here, `validated` has one narrow meaning: the exact candidate-revision blob was
 reviewed as public-safe, aligned to its manifest subject, minimally complete,

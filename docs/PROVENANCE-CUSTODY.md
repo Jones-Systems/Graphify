@@ -60,8 +60,9 @@ effect and cannot substitute for repository delivery.
 - The reviewed repair input is `d1dbac36208b0066fc8907bd9fe9408fc5c51a60`;
   candidate raw inputs are bound by the immutable tree recorded in
   `research/RANKING.md` and the allowlist in `research/positive-claims.json`.
-- A file count is not completeness or acceptance evidence. Intake classified 95
-  files as 21 validated/consumed, three qualified/unconsumed, 46 inherited
+- A file count is not completeness or acceptance evidence. Intake classified
+  100 lanes represented by 95 files as 21 validated/consumed, three
+  qualified/unconsumed, 46 inherited
   blobs excluded as not public-safe, 14 incomplete, two origin-unbound, nine
   misrouted, and five missing.
 - L13 and L19 retain unknown origins. L14, L18, L68, L88, and L92 remain

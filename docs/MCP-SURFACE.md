@@ -1,18 +1,20 @@
-# mj-graph-search — MCP surface blueprint (R6)
+# mj-graph-search — inherited MCP surface proposal
 
-Status: **BLUEPRINT — gated on DEC-9** (register only after the owner lifts
-the deferral). Ships as ONE delivery unit with R17 middleware
-(`tooling/mcp_middleware.py`) and R18 auth/isolation
-(`tooling/auth_isolation.py`). Interim option meanwhile: register the
-already-shipped `graphify-mcp` package (same verbs, narrower backend).
+Status: **HISTORICAL PROPOSAL — unvalidated under the repaired provenance
+contract and gated on DEC-9**. R6, R17, and R18 below are immutable historical
+identities only; `research/RANKING.md` retains `GSR-P2-04` because downstream
+implementation provenance remains unresolved. The existing middleware and
+auth/isolation files are inherited implementation artifacts, not evidence that
+this interface is accepted. No server registration is implied.
 
 ## Transport & posture
 - **stdio first**: parent-process trust, no listener, no token on this
   transport (the OS process boundary is the trust anchor).
 - Optional loopback HTTP/SSE later: launcher-minted bearer token REQUIRED;
   never bound beyond localhost.
-- Deterministic tool ordering: tools are always advertised in the fixed order
-  below; v1 tool NAMES are frozen (master-ranking #6).
+- Proposed deterministic tool ordering: the inherited interface advertises the
+  tools in the fixed order below. The names are not frozen by current research;
+  they require separate interface approval.
 
 ## Tools (5, all read-only)
 
@@ -87,4 +89,4 @@ a SELECT-only sqlite authorizer — structural, not advisory.
 
 ## DEC-9 gate
 Do NOT register this server with agent profiles until the owner lifts the
-DEC-9 deferral; until then use the interim `graphify-mcp` registration path.
+DEC-9 deferral. This document does not authorize an interim registration path.

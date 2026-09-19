@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import ast
 import hashlib
+import io
 import json
 import os
 import re
@@ -13,6 +14,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import tokenize
 import warnings
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -358,28 +360,85 @@ def read_tracked_bytes(
     root: Path = ROOT,
     tracked: frozenset[str] | set[str] | None = None,
 ) -> bytes:
-    path = resolve_tracked_regular_path(relative, root=root, tracked=tracked)
-    expected = path.lstat()
+    canonical = canonical_relative_path(relative)
+    tracked_paths = repository_tracked_paths() if tracked is None else tracked
+    require(canonical in tracked_paths,
+            "tracked read rejected (untracked path)")
     no_follow = getattr(os, "O_NOFOLLOW", None)
     require(no_follow is not None,
             "tracked read rejected (no no-follow support)")
+    directory_only = getattr(os, "O_DIRECTORY", 0)
+    descriptors: list[int] = []
     try:
-        descriptor = os.open(path, os.O_RDONLY | os.O_CLOEXEC | no_follow)
+        root_descriptor = os.open(
+            root,
+            os.O_RDONLY | os.O_CLOEXEC | no_follow | directory_only,
+        )
     except OSError as error:
-        raise CheckFailure("tracked read rejected (open failed)") from error
+        raise CheckFailure("tracked read rejected (repository root unavailable)") from error
+    descriptors.append(root_descriptor)
     try:
-        actual = os.fstat(descriptor)
-        require(stat.S_ISREG(actual.st_mode),
-                "tracked read rejected (opened object is non-regular)")
+        current_descriptor = root_descriptor
+        parts = PurePosixPath(canonical).parts
+        for part in parts[:-1]:
+            try:
+                current_descriptor = os.open(
+                    part,
+                    os.O_RDONLY | os.O_CLOEXEC | no_follow | directory_only,
+                    dir_fd=current_descriptor,
+                )
+            except OSError as error:
+                raise CheckFailure(
+                    "tracked read rejected (parent open failed)"
+                ) from error
+            descriptors.append(current_descriptor)
+            require(
+                stat.S_ISDIR(os.fstat(current_descriptor).st_mode),
+                "tracked read rejected (non-directory parent)",
+            )
+        try:
+            descriptor = os.open(
+                parts[-1],
+                os.O_RDONLY | os.O_CLOEXEC | no_follow,
+                dir_fd=current_descriptor,
+            )
+        except OSError as error:
+            raise CheckFailure("tracked read rejected (open failed)") from error
+        descriptors.append(descriptor)
         require(
-            (actual.st_dev, actual.st_ino, actual.st_mode)
-            == (expected.st_dev, expected.st_ino, expected.st_mode),
-            "tracked read rejected (identity changed before read)",
+            stat.S_ISREG(os.fstat(descriptor).st_mode),
+            "tracked read rejected (opened object is non-regular)",
         )
         with os.fdopen(descriptor, "rb", closefd=False) as handle:
             return handle.read()
     finally:
-        os.close(descriptor)
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
+
+
+def git_blob_oid(data: bytes) -> str:
+    header = f"blob {len(data)}\0".encode("ascii")
+    return hashlib.sha1(header + data).hexdigest()
+
+
+def decode_tracked_source(relative: str, data: bytes) -> str:
+    suffix = PurePosixPath(relative).suffix.casefold()
+    if suffix == ".py":
+        try:
+            encoding, _ = tokenize.detect_encoding(io.BytesIO(data).readline)
+            return data.decode(encoding, "strict")
+        except (LookupError, SyntaxError, UnicodeDecodeError) as error:
+            raise CheckFailure(
+                f"{relative} has an invalid Python source encoding"
+            ) from error
+    try:
+        return data.decode("utf-8", "strict")
+    except UnicodeDecodeError as error:
+        if suffix in SUPPORTED_RAW_CONSUMER_TYPES:
+            raise CheckFailure(
+                f"{relative} has an undecodable executable source"
+            ) from error
+        raise
 
 
 def read_tracked_text(
@@ -406,9 +465,14 @@ def tracked_text_files(
     for relative in sorted(tracked_paths):
         data = read_tracked_bytes(relative, root=root, tracked=tracked_paths)
         if b"\0" in data:
+            require(
+                PurePosixPath(relative).suffix.casefold()
+                not in SUPPORTED_RAW_CONSUMER_TYPES,
+                f"{relative} has a NUL-bearing executable source",
+            )
             continue
         try:
-            value = data.decode("utf-8", "strict")
+            value = decode_tracked_source(relative, data)
         except UnicodeDecodeError:
             continue
         files.append((relative, root / relative, value))
@@ -1255,6 +1319,32 @@ def decode_js_string(value: str) -> str | None:
     return decoded if isinstance(decoded, str) else None
 
 
+def split_js_template(value: str) -> list[tuple[bool, str]] | None:
+    if len(value) < 2 or not value.startswith("`") or not value.endswith("`"):
+        return None
+    body = value[1:-1]
+    parts: list[tuple[bool, str]] = []
+    literal_start = 0
+    index = 0
+    while index < len(body):
+        if body[index] == "\\":
+            index += 2
+            continue
+        if not body.startswith("${", index):
+            index += 1
+            continue
+        parts.append((False, body[literal_start:index]))
+        expression_start = index + 2
+        expression_end = body.find("}", expression_start)
+        if expression_end == -1 or "{" in body[expression_start:expression_end]:
+            return [(True, UNKNOWN_PATH_COMPONENT)]
+        parts.append((True, body[expression_start:expression_end]))
+        index = expression_end + 1
+        literal_start = index
+    parts.append((False, body[literal_start:]))
+    return parts
+
+
 class JavaScriptRawPathAnalyzer:
     """Bounded evaluator for explicit JavaScript path/array composition."""
 
@@ -1281,6 +1371,16 @@ class JavaScriptRawPathAnalyzer:
         decoded = decode_js_string(value)
         if decoded is not None:
             return {decoded}
+        template = split_js_template(value)
+        if template is not None:
+            groups: list[set[str]] = []
+            for is_expression, part in template:
+                if not is_expression:
+                    groups.append({part})
+                    continue
+                evaluated = self._evaluate(part)
+                groups.append(evaluated or {UNKNOWN_PATH_COMPONENT})
+            return join_candidate_groups(groups, "")
         if re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$]*", value):
             return set(self.environment.get(value, set()))
 
@@ -1527,6 +1627,31 @@ def markdown_cells(line: str) -> list[str]:
     require(stripped.startswith("|") and stripped.endswith("|"),
             "not a Markdown table row")
     return [cell.strip() for cell in stripped[1:-1].split("|")]
+
+
+def markdown_row_sha256(cells: list[str]) -> str:
+    return hashlib.sha256("\x1f".join(cells).encode("utf-8")).hexdigest()
+
+
+def validate_claim_table_row(
+    relative: str,
+    line_number: int,
+    line: str,
+    claim: dict[str, Any],
+) -> None:
+    cells = markdown_cells(line)
+    if relative == "research/RANKING.md":
+        expected_cells, statement_column, lane_column = 4, 1, 2
+    else:
+        expected_cells, statement_column, lane_column = 3, 0, 1
+    require(len(cells) == expected_cells,
+            f"{relative}:{line_number} claim row has the wrong shape")
+    require(strip_marker(cells[statement_column]) == claim["statement"],
+            f"{claim['id']} statement differs from claim map")
+    require(parse_lane_refs(cells[lane_column]) == claim["lanes"],
+            f"{claim['id']} lane list differs from claim map")
+    require(markdown_row_sha256(cells) == claim["row_sha256"],
+            f"{claim['id']} complete row differs from claim map")
 
 
 def strip_backticks(value: str) -> str:
@@ -2010,13 +2135,18 @@ def load_manifest() -> tuple[dict[str, Any], str]:
         )
         for raw_path in raw_paths:
             canonical_relative_path(raw_path)
-    references = manifest.get("raw_reference_files")
-    require(
-        isinstance(references, list) and len(references) == len(set(references)),
-        "raw_reference_files must be a unique path list",
-    )
-    for relative in references:
+    reference_sections = manifest.get("raw_reference_sections")
+    require(isinstance(reference_sections, dict),
+            "raw_reference_sections must be a path-keyed object")
+    for relative, sections in reference_sections.items():
         canonical_relative_path(relative)
+        require(
+            isinstance(sections, list)
+            and sections
+            and len(sections) == len(set(sections))
+            and all(isinstance(section, str) and section for section in sections),
+            "raw narrative reference sections must be non-empty and unique",
+        )
     return manifest, hashlib.sha256(raw).hexdigest()
 
 
@@ -2117,8 +2247,7 @@ def check_provenance(manifest: dict[str, Any], rows: dict[str, dict[str, str]]) 
         reviewed_blobs += 1
 
         if row["class"] == "excluded_not_public_safe":
-            resolve_tracked_regular_path(path)
-            working_oid = git("hash-object", "--", path)
+            working_oid = git_blob_oid(read_tracked_bytes(path))
             require(working_oid == row["input_blob_oid"],
                     f"{lane} excluded blob changed from reviewed bytes")
             excluded_blobs += 1
@@ -2130,7 +2259,7 @@ def check_provenance(manifest: dict[str, Any], rows: dict[str, dict[str, str]]) 
         source_oid = git("rev-parse", f"{source_revision}:{path}")
         require(source_oid == entry["blob_oid"],
                 f"{lane} source-revision blob OID mismatch")
-        require(git("hash-object", "--", path) == entry["blob_oid"],
+        require(git_blob_oid(read_tracked_bytes(path)) == entry["blob_oid"],
                 f"{lane} working bytes differ from the allowlisted source blob")
 
     for synthesis_path, _, _ in PARTITIONS.values():
@@ -2161,6 +2290,12 @@ def claims_by_id(manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:
                 f"{claim_id} has no consumer")
         require(isinstance(claim.get("section"), str),
                 f"{claim_id} has no section")
+        if claim.get("form", "table_row") == "table_row":
+            require(
+                isinstance(claim.get("row_sha256"), str)
+                and re.fullmatch(r"[0-9a-f]{64}", claim["row_sha256"]),
+                f"{claim_id} has no exact row digest",
+            )
         claims[claim_id] = claim
     return claims
 
@@ -2265,17 +2400,7 @@ def check_allowlist(manifest: dict[str, Any], rows: dict[str, dict[str, str]]) -
                 require(statement == claim["statement"],
                         f"{claim_id} statement differs from claim map")
             else:
-                cells = markdown_cells(line)
-                if relative == "research/RANKING.md":
-                    statement_column, lane_column = 1, 2
-                else:
-                    statement_column, lane_column = 0, 1
-                require(len(cells) > lane_column,
-                        f"{relative}:{line_number} claim row is too short")
-                require(strip_marker(cells[statement_column]) == claim["statement"],
-                        f"{claim_id} statement differs from claim map")
-                require(parse_lane_refs(cells[lane_column]) == claim["lanes"],
-                        f"{claim_id} lane list differs from claim map")
+                validate_claim_table_row(relative, line_number, line, claim)
             found[claim_id] += 1
 
     require(set(found) == set(claims),
@@ -2306,7 +2431,10 @@ def check_allowlist(manifest: dict[str, Any], rows: dict[str, dict[str, str]]) -
     approved_raw_consumers: dict[str, dict[str, Any]] = manifest[
         "raw_consumer_files"
     ]
-    approved_raw_references = set(manifest["raw_reference_files"])
+    approved_raw_references: dict[str, set[str]] = {
+        relative: set(sections)
+        for relative, sections in manifest["raw_reference_sections"].items()
+    }
     observed_raw_consumers: set[str] = set()
     observed_raw_references: set[str] = set()
     eligible_raw_paths = {entry["path"] for entry in allowlisted.values()}
@@ -2325,6 +2453,25 @@ def check_allowlist(manifest: dict[str, Any], rows: dict[str, dict[str, str]]) -
         if raw_reference_role(path) == "reference":
             if contains_raw_source_reference(text):
                 observed_raw_references.add(relative)
+                require(relative in approved_raw_references,
+                        f"{relative} is an undeclared raw narrative reference")
+                section: str | None = None
+                observed_sections: set[str] = set()
+                for line in text.splitlines():
+                    heading = re.match(r"^## (.+)$", line)
+                    if heading:
+                        section = heading.group(1).strip()
+                    if contains_raw_source_reference(line):
+                        require(
+                            section in approved_raw_references[relative],
+                            f"{relative} has a raw reference outside its "
+                            "declared provenance section",
+                        )
+                        observed_sections.add(section)
+                require(
+                    observed_sections == approved_raw_references[relative],
+                    f"{relative} raw narrative reference sections differ",
+                )
             continue
 
         suffix = path.suffix.casefold()
@@ -2349,7 +2496,7 @@ def check_allowlist(manifest: dict[str, Any], rows: dict[str, dict[str, str]]) -
     require(observed_raw_consumers == set(approved_raw_consumers),
             f"raw consumer allowlist differs: observed={sorted(observed_raw_consumers)} "
             f"approved={sorted(approved_raw_consumers)}")
-    require(observed_raw_references == approved_raw_references,
+    require(observed_raw_references == set(approved_raw_references),
             f"raw narrative reference allowlist differs: "
             f"observed={sorted(observed_raw_references)} "
             f"approved={sorted(approved_raw_references)}")
@@ -2610,6 +2757,22 @@ def self_test() -> None:
             "claim lane parser self-test failed")
     require(is_separator_row(["---:", "---", ":---:"]),
             "separator parser self-test failed")
+    test_claim = {
+        "id": "EXP-01",
+        "statement": "Statement.",
+        "lanes": ["L20", "L64"],
+        "row_sha256": markdown_row_sha256(cells),
+    }
+    validate_claim_table_row("research/RANKING.md", 1, row, test_claim)
+    expect_failure(
+        lambda: validate_claim_table_row(
+            "research/RANKING.md",
+            1,
+            row.replace("gate", "[excluded](raw/L01-private.md)"),
+            test_claim,
+        ),
+        "unchecked positive table cell",
+    )
 
     with tempfile.TemporaryDirectory(prefix="gsr-read-guard-") as temporary:
         container = Path(temporary)
@@ -2622,6 +2785,14 @@ def self_test() -> None:
             "untracked content", encoding="utf-8"
         )
         (test_root / "directory.md").mkdir()
+        (test_root / "nested").mkdir()
+        (test_root / "nested" / "positive.md").write_text(
+            "nested content", encoding="utf-8"
+        )
+        (test_root / "latin.py").write_bytes(
+            b'# coding: latin-1\nnote = "caf\xe9"\n'
+            b'raw = "research/raw/L01-private.md"\n'
+        )
         outside = container / "outside.md"
         outside.write_text("CONTENT-MUST-NOT-ENTER-DIAGNOSTICS", encoding="utf-8")
         (test_root / "link.md").symlink_to("positive.md")
@@ -2631,6 +2802,8 @@ def self_test() -> None:
             "directory.md",
             "link.md",
             "escape.md",
+            "nested/positive.md",
+            "latin.py",
         }
         require(
             read_tracked_text(
@@ -2673,6 +2846,27 @@ def self_test() -> None:
                 test_root.resolve(strict=True), outside.resolve(strict=True)
             ),
             "resolved path outside repository root",
+        )
+        text_files = {
+            relative: value
+            for relative, _, value in tracked_text_files(
+                root=test_root,
+                tracked={"positive.md", "nested/positive.md", "latin.py"},
+            )
+        }
+        require("café" in text_files["latin.py"],
+                "declared Python source encoding was not decoded")
+        require(contains_raw_source_reference(text_files["latin.py"]),
+                "non-UTF-8 executable raw reference was not scanned")
+        nested_directory = test_root / "nested"
+        nested_saved = test_root / "nested-saved"
+        nested_directory.rename(nested_saved)
+        nested_directory.symlink_to(container)
+        expect_failure(
+            lambda: read_tracked_text(
+                "nested/positive.md", root=test_root, tracked=tracked_paths
+            ),
+            "replaced parent directory",
         )
 
     ranking_for_tuple_test = read_tracked_text("research/RANKING.md")
@@ -2951,6 +3145,11 @@ def self_test() -> None:
             '"L01-private.md"]; const first = parts; const second = first; '
             'const candidate = second.join("/");',
         ),
+        "JavaScript template interpolation": (
+            "javascript",
+            'const base = "research"; const dir = "raw"; '
+            'const candidate = `${base}/${dir}/L01-private.md`;',
+        ),
         "conditional base": (
             "python",
             'base = "safe"\nif flag:\n    base = "research"\n'
@@ -3020,6 +3219,11 @@ def self_test() -> None:
             "javascript",
             'let joiner = noop; joiner = path.join; const candidate = '
             'joiner("research", "raw", "L01-private.md");',
+        ),
+        "dynamic JavaScript template": (
+            "javascript",
+            'const base = choose("research"); const dir = "raw"; '
+            'const candidate = `${base}/${dir}/L01-private.md`;',
         ),
     }
     for label, (file_type, value) in raw_dynamic_probes.items():
@@ -3256,9 +3460,9 @@ def main(argv: list[str]) -> int:
             print(f"FAIL GSR-SELF-TEST {error}", file=sys.stderr)
             return 1
         print(
-            "PASS GSR-SELF-TEST parser_cases=4 path_identity_adversarial=9 "
-            "historical_tuple_adversarial=2 boundary_adversarial=7 "
-            "raw_path_adversarial=49 scip_adversarial=13"
+            "PASS GSR-SELF-TEST parser_cases=5 path_identity_adversarial=10 "
+            "historical_tuple_adversarial=2 boundary_adversarial=8 "
+            "raw_path_adversarial=51 scip_adversarial=13"
         )
         return 0
 

@@ -1,10 +1,14 @@
 # Deploy - systemd-native batch governor (zero packages)
 
-Implements the L83 escalation-ladder recipe for Graphify batch refreshes
-(KG rebuilds, embedding backfills) so interactive agent workloads stay
-responsive and the host-wide `MemAvailable >= 3072 MiB` floor is never
-breached by batch pressure. Everything is stock systemd + one POSIX sh
-script - no packages, no cgroup-tooling dependencies.
+This is an inherited, unvalidated deployment example for Graphify batch
+refreshes (KG rebuilds and embedding backfills). Repaired L83 evidence supports
+parameterized resource-control experiments; it does not select these values or
+establish deployment readiness. The example uses stock systemd plus one POSIX
+shell script and has no package or cgroup-tooling dependency.
+
+The entry gate samples `MemAvailable` before launch, the slice limits the batch
+cgroup, and payload-side guards check between stages. Those controls do not
+prove that a host-wide memory floor is continuously preserved after launch.
 
 ## Units and install paths
 
@@ -58,9 +62,9 @@ sudo systemd-run --scope --slice=batch-refresh.slice \
 5. **Whole-box OOM bias** - `OOMScoreAdjust=500` nominates the batch as
    the preferred victim if the host ever hits global OOM, shielding
    interactive sessions.
-6. **Payload-side stage guards** - long-running stages should checkpoint
-   and pause themselves below `MemAvailable = 3072 MiB` (same floor logic
-   as `tooling/install.sh` / `tooling/preflight.py`).
+6. **Payload-side stage guards** - `tooling/build-graph.sh` checks available
+   memory at stage boundaries and exits when its configured floor is not met.
+   It does not continuously monitor memory inside a running stage.
 
 ## Timer shape
 
@@ -69,7 +73,10 @@ sudo systemd-run --scope --slice=batch-refresh.slice \
 re-randomizing every event) and `Persistent=true` (runs missed while the
 host was down catch up at next boot).
 
-## Floor reference
+## Inherited example values
+
+These repository values are implementation inputs awaiting public-fixture and
+target-host validation; they are not selected by the repaired research record.
 
 | Threshold               | Value                        | Enforced by                     |
 |-------------------------|------------------------------|---------------------------------|

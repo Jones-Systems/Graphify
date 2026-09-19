@@ -173,7 +173,11 @@
     }
   ],
   "raw_consumer_files": {},
-  "raw_reference_files": ["research/RANKING.md"],
+  "raw_reference_sections": {
+    "research/RANKING.md": [
+      "Exact reviewed provenance and candidate eligibility map"
+    ]
+  },
   "allowlisted_lanes": {
     "L20": {
       "path": "research/raw/L20-pg17-hybrid-search.md",
@@ -286,6 +290,7 @@
       "id": "EXP-01",
       "consumer": "research/RANKING.md",
       "section": "Evidence-bound experiment order",
+      "row_sha256": "61f0940115ed4ec45c24b8ba03c57d224868e407d5bc647b196d6996c77e9ffd",
       "statement": "Establish a reproducible PostgreSQL hybrid-search run in a public benchmark harness.",
       "lanes": ["L20", "L64"]
     },
@@ -293,6 +298,7 @@
       "id": "EXP-02",
       "consumer": "research/RANKING.md",
       "section": "Evidence-bound experiment order",
+      "row_sha256": "e67c25b9210db205839bdada958aad134255aa0a474002f4f8c84b49820f7bc9",
       "statement": "Compare SQLite, FalkorDB, and LadybugDB as storage candidates.",
       "lanes": ["L43", "L48", "L49"]
     },
@@ -300,6 +306,7 @@
       "id": "EXP-03",
       "consumer": "research/RANKING.md",
       "section": "Evidence-bound experiment order",
+      "row_sha256": "4b1b6e1db2a00f0fdf42638ed2566cc05ce8ac0bfd3be685f1018ca6b08787a9",
       "statement": "Evaluate structural code extraction and graph construction.",
       "lanes": ["L29", "L33"]
     },
@@ -307,6 +314,7 @@
       "id": "EXP-04",
       "consumer": "research/RANKING.md",
       "section": "Evidence-bound experiment order",
+      "row_sha256": "f33fc9b9a23d092319de79e13c2aa8fb6b23547d8fea785fcf82777b572343af",
       "statement": "Evaluate a parameterized constrained batch-extraction and quantization comparison.",
       "lanes": ["L37", "L40", "L42"]
     },
@@ -314,6 +322,7 @@
       "id": "EXP-05",
       "consumer": "research/RANKING.md",
       "section": "Evidence-bound experiment order",
+      "row_sha256": "e425a0fce6f6bf7bd0c86f313eee141ea7b38946735196278eb711cfcee016fd",
       "statement": "Pilot Splink entity resolution.",
       "lanes": ["L22"]
     },
@@ -321,6 +330,7 @@
       "id": "EXP-06",
       "consumer": "research/RANKING.md",
       "section": "Evidence-bound experiment order",
+      "row_sha256": "f1596c0f6f4f81ec7514ec180b1daba821dca62c1040370e3df173781cb59eae",
       "statement": "Exercise a small read-only, typed, response-bounded query surface.",
       "lanes": ["L53", "L54", "L55", "L57"]
     },
@@ -328,6 +338,7 @@
       "id": "EXP-07",
       "consumer": "research/RANKING.md",
       "section": "Evidence-bound experiment order",
+      "row_sha256": "f0f9e9482cb568c1c5b1b7bc6ec8d04cea9d94d08b1ad044e18f7c2b7acc163b",
       "statement": "Measure federated aggregation and refresh with bounded scheduling.",
       "lanes": ["L72", "L78", "L79", "L83"]
     },
@@ -335,6 +346,7 @@
       "id": "EXP-08",
       "consumer": "research/RANKING.md",
       "section": "Evidence-bound experiment order",
+      "row_sha256": "ccd6ecf26941a2002988677a1cd66ef42a3f216e9414dbfaa73f7cbc2a1226d0",
       "statement": "Evaluate token-budgeted traversal.",
       "lanes": ["L86"]
     },
@@ -342,6 +354,7 @@
       "id": "EXP-09",
       "consumer": "research/RANKING.md",
       "section": "Evidence-bound experiment order",
+      "row_sha256": "8df57a58cde8dafbb1e4cbea27eb6f1d10ed1c723a44d96c9f4d62e8e15824dc",
       "statement": "Evaluate frontmatter query behavior without adding a persistence claim.",
       "lanes": ["L93"]
     },
@@ -349,6 +362,7 @@
       "id": "SA-01",
       "consumer": "research/synthesis/S-A-t1-t3.md",
       "section": "Supported synthesis",
+      "row_sha256": "fb8c30d95716a831d476a2aa854b49aea2430644a0c0255ee76430f0d1129686",
       "statement": "PostgreSQL full-text plus pgvector is a public-source hybrid-search candidate.",
       "lanes": ["L20"]
     },
@@ -364,6 +378,7 @@
       "id": "SB-01",
       "consumer": "research/synthesis/S-B-t4-t6.md",
       "section": "Supported synthesis",
+      "row_sha256": "af31ef18546d71000d3403b7459651dbd728cc8676d61d2308b14aae496daadf",
       "statement": "Splink is a public-source entity-resolution candidate.",
       "lanes": ["L22"]
     },
@@ -371,6 +386,7 @@
       "id": "SB-02",
       "consumer": "research/synthesis/S-B-t4-t6.md",
       "section": "Supported synthesis",
+      "row_sha256": "2ed8b4c45120a5d9d46e4117ebce6460d4bb354d0d12c4048a5ff706e04ba4db",
       "statement": "Tree-sitter and Joern are documented structural-code extraction candidates.",
       "lanes": ["L29", "L33"]
     },
@@ -378,6 +394,7 @@
       "id": "SB-03",
       "consumer": "research/synthesis/S-B-t4-t6.md",
       "section": "Supported synthesis",
+      "row_sha256": "38af7881ae00f5b5f1487d6d4d6bf1a84a7df8ec0ed0ee331183ac0e4e97fafd",
       "statement": "Public comparisons of bounded llama.cpp profiles, small-model candidates, and quantization formats can frame a batch-extraction experiment.",
       "lanes": ["L37", "L40", "L42"]
     },
@@ -393,6 +410,7 @@
       "id": "SC-01",
       "consumer": "research/synthesis/S-C-t7-t10.md",
       "section": "Supported synthesis",
+      "row_sha256": "08aeb42e58a605ae18d69848b3ca7725f5dbf72cfb70ed2ae0f06fcf671191db",
       "statement": "SQLite, FalkorDB, and LadybugDB are documented storage candidates for a public-fixture comparison.",
       "lanes": ["L43", "L48", "L49"]
     },
@@ -400,6 +418,7 @@
       "id": "SC-02",
       "consumer": "research/synthesis/S-C-t7-t10.md",
       "section": "Supported synthesis",
+      "row_sha256": "71b643ef8d2c36c65b913007e5aaae03a252f6edc178270dea65830fa5e84b23",
       "statement": "A small read-only graph/search surface can use typed schemas, response-size bounds, explicit isolation controls, and an openCypher-style interface candidate.",
       "lanes": ["L53", "L54", "L55", "L57"]
     },
@@ -407,6 +426,7 @@
       "id": "SC-03",
       "consumer": "research/synthesis/S-C-t7-t10.md",
       "section": "Supported synthesis",
+      "row_sha256": "6a4701d68e19dabbbd869f44d62738334a58c88c017fe83c273eb56203baf3f0",
       "statement": "BEIR datasets and run formats can anchor a public evaluation harness.",
       "lanes": ["L64"]
     },
@@ -422,6 +442,7 @@
       "id": "SD-01",
       "consumer": "research/synthesis/S-D-t11-t14.md",
       "section": "Supported synthesis",
+      "row_sha256": "64f5a8a08859a2275e26da34061504fc18f5ccb8bc6e00f74d4c79997d058b40",
       "statement": "Federated result aggregation can evaluate weighted rank-space fusion with bounded parallelism, timeouts, quotas, and explicit partial results.",
       "lanes": ["L72"]
     },
@@ -429,6 +450,7 @@
       "id": "SD-02",
       "consumer": "research/synthesis/S-D-t11-t14.md",
       "section": "Supported synthesis",
+      "row_sha256": "fb0ac2356e7cdd9b98cf90dc779f3b02606fbe28d2cf0c77a471e49fc696132c",
       "statement": "Refresh experiments can use Git-delta mechanics, generic timer or watcher behavior, overflow rescan, and parameterized resource controls.",
       "lanes": ["L78", "L79", "L83"]
     },
@@ -436,6 +458,7 @@
       "id": "SD-03",
       "consumer": "research/synthesis/S-D-t11-t14.md",
       "section": "Supported synthesis",
+      "row_sha256": "57f192e24f8a75d68cf73b73132c191c3554d4f672593d513e605bee5b9d228a",
       "statement": "Token-budget-aware traversal is a documented experiment direction.",
       "lanes": ["L86"]
     },
@@ -443,6 +466,7 @@
       "id": "SD-04",
       "consumer": "research/synthesis/S-D-t11-t14.md",
       "section": "Supported synthesis",
+      "row_sha256": "27f3e6fb2603a75ba2297e44d82aa6c9a39ffb037173d9902fd5206febeaa547",
       "statement": "Headless frontmatter query engines are documented candidates.",
       "lanes": ["L93"]
     },
