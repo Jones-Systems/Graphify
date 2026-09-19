@@ -139,6 +139,14 @@ templates, nested dynamic interpolation, and FIFO leaves. One admitted serial
 process passed the expanded self-test, all declared provenance groups, Python
 bytecode compilation, and whitespace validation at this checkpoint.
 
+Renewed review then found `GSR-FCR-02` / `GSR-SEC-FINAL-02` still admitted the
+valid JavaScript code-point escape `\\u{61}`. Checkpoint
+`613ed36254f71be15f857b5bcc267d919c8e78ca` decodes bounded braced Unicode
+escapes, rejects invalid or out-of-range values, and adds the missing exact-path
+regression. The expanded 55-case raw-path adversarial set and all declared
+provenance groups passed before this checkpoint was recorded. Exact-revision
+renewed review remains the final finding-closure gate.
+
 ## Stop And Recovery Boundaries
 
 Stop the affected mutation on source drift, an active or unknown writer,
