@@ -45,44 +45,96 @@ pf, root, stage, owned_root = json.load(open(sys.argv[1])), *sys.argv[2:5]
 # be an exact materialization of the current admitted inventory.
 stage, owned_root = map(os.path.abspath, (stage, owned_root))
 source_root = os.path.realpath(root)
-if os.path.realpath(owned_root) != owned_root:
-    raise RuntimeError(f"refusing symlinked Graphify root: {owned_root}")
 if os.path.commonpath((stage, owned_root)) != owned_root or stage == owned_root:
     raise RuntimeError(f"refusing staging target outside owned root: {stage}")
-if os.path.realpath(stage) != stage:
-    raise RuntimeError(f"refusing symlinked staging ancestry: {stage}")
 overlap = os.path.commonpath((stage, source_root))
 if overlap in {stage, source_root}:
     raise RuntimeError(f"refusing staging/source overlap: {stage} and {source_root}")
 if os.path.basename(stage) != "view" or os.path.basename(os.path.dirname(stage)) != "staging":
     raise RuntimeError(f"refusing unexpected staging shape: {stage}")
 staging_parent = os.path.dirname(stage)
-marker = os.path.join(staging_parent, ".graphify-view-owner")
-if os.path.lexists(staging_parent):
-    if os.path.islink(staging_parent) or not os.path.isdir(staging_parent):
-        raise RuntimeError(f"refusing unsafe staging parent: {staging_parent}")
+
+def open_absolute_directory_no_follow(path):
+    descriptor = os.open(os.sep, os.O_RDONLY | os.O_DIRECTORY)
     try:
-        marker_fd = os.open(marker, os.O_RDONLY | os.O_NOFOLLOW)
-        with os.fdopen(marker_fd, encoding="utf-8") as handle:
-            marker_owned = (
-                stat.S_ISREG(os.fstat(handle.fileno()).st_mode)
-                and handle.read() == "graphify-staging-v1\n"
+        for component in [part for part in path.split(os.sep) if part]:
+            child = os.open(
+                component,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                dir_fd=descriptor,
             )
-    except OSError:
-        marker_owned = False
-    if not marker_owned:
-        raise RuntimeError(f"refusing unowned staging contents: {staging_parent}")
-else:
-    os.makedirs(staging_parent, mode=0o700)
-    with open(marker, "x", encoding="utf-8") as handle:
-        handle.write("graphify-staging-v1\n")
-if os.path.lexists(stage):
-    if os.path.islink(stage) or not os.path.isdir(stage):
-        raise RuntimeError(f"refusing unsafe staging target: {stage}")
-    if not shutil.rmtree.avoids_symlink_attacks:
-        raise RuntimeError("refusing staging replacement without safe rmtree support")
-    shutil.rmtree(stage)
-os.makedirs(stage, mode=0o700)
+            os.close(descriptor)
+            descriptor = child
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+parent_fd = open_absolute_directory_no_follow(owned_root)
+parent_created = False
+try:
+    relative_parent = os.path.relpath(staging_parent, owned_root)
+    for component in relative_parent.split(os.sep):
+        try:
+            child = os.open(
+                component,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                dir_fd=parent_fd,
+            )
+            created = False
+        except FileNotFoundError:
+            os.mkdir(component, mode=0o700, dir_fd=parent_fd)
+            child = os.open(
+                component,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                dir_fd=parent_fd,
+            )
+            created = True
+        os.close(parent_fd)
+        parent_fd = child
+        parent_created = created
+
+    marker_name = ".graphify-view-owner"
+    marker_bytes = b"graphify-staging-v1\n"
+    if parent_created:
+        marker_fd = os.open(
+            marker_name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+            dir_fd=parent_fd,
+        )
+        with os.fdopen(marker_fd, "wb") as handle:
+            handle.write(marker_bytes)
+    else:
+        try:
+            marker_fd = os.open(
+                marker_name,
+                os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW,
+                dir_fd=parent_fd,
+            )
+            with os.fdopen(marker_fd, "rb") as handle:
+                marker_owned = (
+                    stat.S_ISREG(os.fstat(handle.fileno()).st_mode)
+                    and handle.read(len(marker_bytes) + 1) == marker_bytes
+                )
+        except OSError:
+            marker_owned = False
+        if not marker_owned:
+            raise RuntimeError(f"refusing unowned staging contents: {staging_parent}")
+
+    try:
+        stage_stat = os.stat("view", dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        stage_stat = None
+    if stage_stat is not None:
+        if not stat.S_ISDIR(stage_stat.st_mode):
+            raise RuntimeError(f"refusing unsafe staging target: {stage}")
+        if not shutil.rmtree.avoids_symlink_attacks:
+            raise RuntimeError("refusing staging replacement without safe rmtree support")
+        shutil.rmtree("view", dir_fd=parent_fd)
+    os.mkdir("view", mode=0o700, dir_fd=parent_fd)
+finally:
+    os.close(parent_fd)
 n = 0
 for e in pf["included"]:
     src, dst = e["resolved"], os.path.join(stage, e["logical"])
