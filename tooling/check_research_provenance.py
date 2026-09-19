@@ -1353,6 +1353,9 @@ def decode_js_template_fragment(value: str) -> str | None:
         if escape == "\r":
             index += 3 if value[index + 2:index + 3] == "\n" else 2
             continue
+        if escape in {"\u2028", "\u2029"}:
+            index += 2
+            continue
         if escape in "01234567":
             maximum_width = 3 if escape in "0123" else 2
             digits = escape
@@ -1467,6 +1470,12 @@ class JavaScriptRawPathAnalyzer:
 
     def _evaluate(self, expression: str) -> set[str]:
         value = strip_balanced_parentheses(expression.strip().removesuffix(";"))
+        plus_parts = split_js_top_level(value, "+")
+        if len(plus_parts) > 1:
+            return join_candidate_groups(
+                [self._evaluate(part) for part in plus_parts], ""
+            )
+
         decoded = decode_js_string(value)
         if decoded is not None:
             return {decoded}
@@ -1490,12 +1499,6 @@ class JavaScriptRawPathAnalyzer:
             return join_candidate_groups(groups, "")
         if re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$]*", value):
             return set(self.environment.get(value, set()))
-
-        plus_parts = split_js_top_level(value, "+")
-        if len(plus_parts) > 1:
-            return join_candidate_groups(
-                [self._evaluate(part) for part in plus_parts], ""
-            )
 
         join_match = re.fullmatch(r"(.+)\.join\s*\((.*)\)", value, re.DOTALL)
         if join_match:
@@ -3345,6 +3348,18 @@ def self_test() -> None:
             "javascript",
             'const candidate = `research/r\\\naw/L01-private.md`;',
         ),
+        "JavaScript line-separator continuation": (
+            "javascript",
+            'const candidate = `research/r\\\u2028aw/L01-private.md`;',
+        ),
+        "JavaScript paragraph-separator continuation": (
+            "javascript",
+            'const candidate = `research/r\\\u2029aw/L01-private.md`;',
+        ),
+        "JavaScript concatenated templates": (
+            "javascript",
+            'const candidate = `research` + `/r\\u0061w/L01-private.md`;',
+        ),
         "conditional base": (
             "python",
             'base = "safe"\nif flag:\n    base = "research"\n'
@@ -3663,7 +3678,7 @@ def main(argv: list[str]) -> int:
         print(
             "PASS GSR-SELF-TEST parser_cases=5 path_identity_adversarial=11 "
             "historical_tuple_adversarial=2 boundary_adversarial=10 "
-            "raw_path_adversarial=59 scip_adversarial=13"
+            "raw_path_adversarial=62 scip_adversarial=13"
         )
         return 0
 

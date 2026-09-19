@@ -41,6 +41,13 @@ mem_guard post-preflight
 python3 - "$RUN/preflight.json" "$ROOT" "$STAGE" <<'EOF'
 import json, os, shutil, sys
 pf, root, stage = json.load(open(sys.argv[1])), sys.argv[2], sys.argv[3]
+# The fixed staging path gives extractors stable IDs, but every run must still
+# be an exact materialization of the current admitted inventory.
+if os.path.lexists(stage):
+    if os.path.islink(stage) or not os.path.isdir(stage):
+        raise RuntimeError(f"refusing unsafe staging target: {stage}")
+    shutil.rmtree(stage)
+os.makedirs(stage, mode=0o700)
 n = 0
 for e in pf["included"]:
     src, dst = e["resolved"], os.path.join(stage, e["logical"])
