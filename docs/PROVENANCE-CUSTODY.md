@@ -125,6 +125,20 @@ cell, Latin-1 Python consumer, interpolated JavaScript path, and replaced parent
 directory. These results qualify this checkpoint only; final review and merge
 use the later exact candidate revision and renewed checks.
 
+### Final-review remediation checkpoint `7f4bb416dd87ef8e3e4101ecba9428e99abdae9b`
+
+Independent correctness and security review of the prior candidate found four
+additional P2 guard defects. `GSR-FCR-01` is fixed by accepting only one exact
+header per tabular positive section. `GSR-FCR-02` and
+`GSR-SEC-FINAL-01` are fixed by decoding cooked JavaScript template escapes,
+retaining known template components across unsupported nested interpolation,
+and marking unresolved paths fail-closed. `GSR-FCR-03` is fixed by opening the
+leaf nonblocking before rejecting non-regular objects. Expanded regressions
+cover extra and altered headers, escaped interpolated and non-interpolated
+templates, nested dynamic interpolation, and FIFO leaves. One admitted serial
+process passed the expanded self-test, all declared provenance groups, Python
+bytecode compilation, and whitespace validation at this checkpoint.
+
 ## Stop And Recovery Boundaries
 
 Stop the affected mutation on source drift, an active or unknown writer,
