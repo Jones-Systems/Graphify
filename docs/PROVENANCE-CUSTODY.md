@@ -149,7 +149,7 @@ renewed review remains the final finding-closure gate.
 
 Renewed review of that checkpoint preserved the same finding identities after
 showing that leading-zero braced code points and JavaScript line continuations
-could still spell the excluded `research/raw/` path. Checkpoint
+could still spell the excluded raw-source directory. Checkpoint
 `a7bbdbf4d985124249960dca4d6537de64ba0651` decodes those forms, applies the
 same bounded decoder to quoted literals, and covers legacy octal escapes used
 by non-strict JavaScript. Its focused self-test passed with 59 raw-path
