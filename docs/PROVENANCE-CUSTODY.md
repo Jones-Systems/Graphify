@@ -156,6 +156,19 @@ by non-strict JavaScript. Its focused self-test passed with 59 raw-path
 adversarial cases. The complete declared check set and independent review must
 bind the later exact candidate that contains this custody update.
 
+Independent review of the resulting candidate kept `GSR-FCR-02` and
+`GSR-SEC-FINAL-02` open after finding compound template concatenation and the
+remaining JavaScript line-separator continuations. It also opened
+`GSR-SEC-FINAL-03` (P2): the inherited fixed staging path could retain a file
+that a later preflight excluded. Checkpoint
+`65d5f7ee2d22b754c4e9bf1389be73ddb96bb12e` evaluates concatenation before
+literal decoding, covers all four JavaScript line terminators, replaces the
+fixed staging view from the current admitted inventory on every run, and makes
+validation reject any graph source absent from that inventory. Focused tests
+passed with 62 raw-path adversarial cases and a cleanup-owned stale-stage
+fixture. Exact-candidate full checks and renewed independent review remain
+required.
+
 ## Stop And Recovery Boundaries
 
 Stop the affected mutation on source drift, an active or unknown writer,
