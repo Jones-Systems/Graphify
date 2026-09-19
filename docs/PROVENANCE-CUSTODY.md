@@ -147,6 +147,15 @@ regression. The expanded 55-case raw-path adversarial set and all declared
 provenance groups passed before this checkpoint was recorded. Exact-revision
 renewed review remains the final finding-closure gate.
 
+Renewed review of that checkpoint preserved the same finding identities after
+showing that leading-zero braced code points and JavaScript line continuations
+could still spell the excluded `research/raw/` path. Checkpoint
+`a7bbdbf4d985124249960dca4d6537de64ba0651` decodes those forms, applies the
+same bounded decoder to quoted literals, and covers legacy octal escapes used
+by non-strict JavaScript. Its focused self-test passed with 59 raw-path
+adversarial cases. The complete declared check set and independent review must
+bind the later exact candidate that contains this custody update.
+
 ## Stop And Recovery Boundaries
 
 Stop the affected mutation on source drift, an active or unknown writer,
