@@ -1,0 +1,42 @@
+# LANE L81 — T12 freshness: content-addressed chunk caching (unchanged files skip re-extraction on rebuilds)
+
+Date: 2026-08-25 | Constraints: Debian VPS, 16-core EPYC Genoa, NO GPU, MemAvailable floor 3072 MiB, Python 3.13, offline/permissive preferred.
+
+## Findings table
+
+|Item|Type(tool/repo/strategy/technique)|URL|License|Maturity|StackFit0-5|EffGain0-5|EffectGain0-5|QualGain0-5|AdoptCost0-5(lower=better)|Conf(H/M/L)|KeyEvidence|
+|---|---|---|---|---|---|---|---|---|---|---|---|
+|Two-tier file-blob CAS chunk cache (sqlite WITHOUT ROWID, key = ns‖BLAKE3(bytes))|strategy|internal (this lane)|n/a|proven pattern (CAS is ubiquitous)|5|5|4|1|1|H|Rebuild becomes O(churn) not O(corpus); tantivy 0.26.x supports atomic per-doc upsert (delete_documents_by_term + add, one commit — tantivy examples/docs checked 2026-08-25); sha256 content plumbing already exists in src/codex_v3/context.py (SliceRequest.expected_sha256, source/content digests) so convention is established in-repo|
+|python `blake3` (PyO3 binding to Rust BLAKE3)|tool|https://github.com/oconnor663/blake3-py|Apache-2.0 OR MIT (core dual CC0/Apache)|High|5|3|2|0|1|H|SIMD AVX2/AVX-512 paths; ~1–4 GB/s single-thread, several-to-20 GB/s with AUTO multithreading on server CPUs; update_mmap for large files; py3.13 wheels; release train at 1.0.9 (noted 2026-06-22, repo checked 2026-08-25) — full 18-repo corpus hashed in seconds–minutes, well under RAM floor|
+|Git object DB as free content-addressed store|technique|https://git-scm.com/book/en/v2/Git-Internals-Git-Objects|GPL-2.0 (unlinked CLI tool)|High|5|4|2|0|1|H|Blob OIDs ARE content hashes; `git ls-tree -r HEAD` maps paths→OID, `cat-file --batch-check` bulk-validates, `diff-tree -r A..B` lists changed paths with zero re-hashing — nightly change detection becomes nearly free for git-tracked files|
+|tantivy incremental per-chunk upsert|technique|https://github.com/quickwit-oss/tantivy/blob/main/examples/deleting_updating_documents.rs|MIT|High (tantivy 0.26.1 current per docs.rs, checked 2026-08-25)|5|4|4|0|1|H|Update = delete_documents_by_term(raw-tokenizer ID) + add_document committed atomically; enables chunk/file-granular rebuild instead of whole-corpus reindex; requires own unique-ID field with raw tokenizer (no PK enforcement)|
+|Zoekt repo-level skip + delta indexing (prior art)|repo|https://github.com/sourcegraph/zoekt|Apache-2.0|High (prod at Sourcegraph/GitLab/Gitea)|3|3|3|0|3|H|IncrementalSkipIndexing() compares indexed branch commit SHAs + index options and exits without rebuilding; eligible changes take delta builds replacing only changed paths (indexserver main.go + design docs checked 2026-08-25). Validates the two-tier skip design, but Go/shard model ≠ our sqlite/tantivy stack — mine for semantics, don't adopt the binary|
+|Salsa early-cutoff (backdating) + durability tiers (prior art)|technique|https://salsa-rs.github.io/salsa/reference/algorithm.html|Apache-2.0 OR MIT|High (rust-analyzer production)|4|3|3|1|2|H|Memoized queries re-execute only when dependencies change; equal recomputed result preserves changed-at (backdating) stopping propagation — exact blueprint for chunk-level early cutoff; Durability::HIGH for stable inputs (stdlib/vendored) skips validation entirely (docs checked 2026-08-25)|
+|Chunk-sha-keyed embedding memoization ((chunk_sha, model_ver) → vector BLOB)|technique|n/a (store via sqlite-vec 0.1.9, released 2026-03-31 per PyPI checked 2026-08-25)|n/a|common pattern in RAG stacks|5|4|5|1|1|M|Local CPU embedding is the dominant per-build cost; expected chunk survival 97–99.5% nightly ⇒ nearly all encoder spend eliminated on steady days; also protects against wasted GLiNER/ER passes on unchanged chunks [INFERENCE on %, anchored by churn refs below]|
+|Negative-result caching + versioned namespace invalidation (ns = schema_ver‖grammar_vers‖chunker_ver)|technique|internal|n/a|n/a|5|2|2|2|1|M|Namespace bump makes extractor/tree-sitter-grammar upgrades a deliberate full invalidate instead of silent stale-chunk corruption; caches binary/unparseable/skip decisions so scans never re-litigate them; QualGain via guaranteed freshness-consistency|
+|Generational mark-sweep GC (last_seen_generation, sweep after N unseen gens)|technique|internal (standard CAS-store practice)|n/a|standard|4|2|1|1|1|H|Sweep entries unseen for 14 generations: tolerates weekly branch flapping, bounds cache size ≈1.1–1.2× live corpus; idempotent INSERT OR IGNORE under WAL, single writer|
+|stat-screen prefilter (mtime+size before hashing)|technique|classic (make/rsync heuristic)|n/a|universal|4|3|1|0|1|H|Skips read+hash for stat-stable files so steady-state nights cost one scandir; hash fallback on stat mismatch neutralizes mtime lies (checkouts, touch, rsync without -t)|
+|Content-defined chunking (Rabin/FastCDC) for non-code blobs|technique|https://www.usenix.org/system/files/conference/atc16/atc16-paper-xia.pdf|academic (impls MIT/BSD)|High in backup domain|2|2|2|0|2|H|FastCDC ≈ Rabin dedup within ±0.1–1.4 pp; LNX corpus 97.25% cross-version dedup at 8 KiB chunks (ATC'16 Table) — strong anchor that byte-level reuse survives small edits; restic ships Rabin CDC at 512 KiB–8 MiB targets (too coarse for code); reserve CDC for large generated JSON/logs where AST chunk boundaries are unstable|
+
+## Design & expected hit-rates (lane-specific ask)
+
+**Cache layout (two-tier CAS).** Tier 1 `file_cache`: sqlite WITHOUT ROWID, PK BLOB(32) = BLAKE3(file bytes) under namespace `ns = schema_ver‖tree_sitter_grammar_vers‖chunker_ver‖er_ver`; value = ordered (chunk_ord, span, chunk_sha, lang, symbol_path) list plus negative-result flag (binary/unparseable/skip). Tier 2 `chunk_value`: PK (chunk_sha, model_ver) → embedded vector BLOB (int8) ± chunk text. For git repos, substitute free blob OIDs (ls-tree/cat-file) for BLAKE3 — zero hashing cost; BLAKE3 covers non-git trees.
+
+**Nightly flow.** stat-screen (mtime+size) → hash/screen survivors → set-diff vs Tier 1 → extract misses only → chunk-sha lookups in Tier 2 (embed only new chunk_shas) → tantivy upsert per changed chunk (delete_documents_by_term + add, ONE commit) → generation++. GC sweeps entries unseen 14 generations. Audit: re-extract 0.5% random hits per build, compare — drift alarm for nondeterministic extractors.
+
+**Hit-rate model.** H_file ≈ 1 − nightly file churn (content addressing additionally survives branch switches/reverts/mtime lies, where mtime-based schemes collapse). Churn anchors: Wang & Yu ISSRE 2018 (7,018,512 commits, 918 GitHub projects): mean 8.6% of source files change per <10-min commit interval; glibc study: 99% of commits touch ≤56 files; nightly aggregation over low-activity VPS repos ⇒ c ≈ 0.2–2%/day [INFERENCE].
+
+|Scenario|File-hit|Extraction avoided|Embedding reuse|Note|
+|---|---|---|---|---|
+|Quiet night (<0.1%)|~99.9%|~99.9%|~99.9%|wall time ≈ hash scan + tiny delta|
+|Typical (0.5–2%)|98–99.5%|≈ same|97–99.5%|intra-file early cutoff (Salsa-style) reuses 30–60% of chunks inside changed files [INFERENCE/M]|
+|Active day (~5%)|~95%|~95%|90–96%||
+|Branch switch / revert|~95–100%|high|high|CAS immune to mtime lies|
+|Extractor/grammar upgrade|0% (forced)|0%|0%|intentional via ns bump|
+|Cold start|0%|0%|0%|amortized from night 2|
+
+Hashing overhead: BLAKE3 at 1–20 GB/s ⇒ multi-GB corpora hashed in seconds–minutes (16 cores), or zero via git OIDs; sqlite page cache 64–128 MiB keeps bursts far below the 3072 MiB MemAvailable floor. Net effect: nightly rebuild cost becomes proportional to churn, not corpus size; worst case (cold) remains bounded by the existing full-build budget.
+
+## Verdict
+Top pick: two-tier CAS — sqlite WITHOUT ROWID file cache keyed by ns‖BLAKE3(bytes) (free git OIDs where available) + chunk-sha-keyed embedding memo, tantivy per-chunk term-delete upsert in one commit. Why: converts nightly rebuilds from O(corpus) to O(churn) at 98–99.8% expected file-hit rates on these mostly-static repos, at adopt-cost 1 — sha256 plumbing already exists in src/codex_v3/context.py and every mechanism is proven prior art (Zoekt skip/delta, Salsa backdating, tantivy 0.26.x atomic upsert).
+Integration sketch: nightly job = stat-screen → hash (blake3 mmap / git ls-tree) → set-diff vs cache → extract misses → upsert tantivy by chunk-id term (single commit) → gen++ with 14-gen GC sweep; audit-resample 0.5% hits; namespace = schema‖grammar‖chunker versions so upgrades invalidate deliberately.

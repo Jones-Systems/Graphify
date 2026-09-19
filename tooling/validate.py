@@ -32,6 +32,12 @@ def main():
     if not isinstance(g, dict) or "nodes" not in g or "directed" not in g:
         fatals.append("schema:not-networkx-node-link")
 
+    pf = json.load(open(preflight_path))
+    admitted_sources = {
+        os.path.realpath(os.path.join(root, entry["logical"]))
+        for entry in pf["included"]
+    }
+
     nodes = g.get("nodes", [])
     ids = set()
     dup = set()
@@ -70,8 +76,11 @@ def main():
             p = os.path.realpath(sf if os.path.isabs(sf) else os.path.join(root, sf))
             if not (p == root or p.startswith(root + os.sep)):
                 fatals.append(f"source-path-outside-root:{sf}")
-            elif not os.path.exists(p):
-                unresolved_int.append(sf)
+            else:
+                if p not in admitted_sources:
+                    fatals.append(f"source-not-in-preflight:{sf}")
+                if not os.path.exists(p):
+                    unresolved_int.append(sf)
 
     # forbidden values in governed fields (ENG-C7/C9): exclusion metadata exempt
     forbidden_tokens = ("/.git/", ".env", "id_rsa", ".pem", "private_key_file", "/secrets/")
@@ -81,7 +90,6 @@ def main():
         if hit: fatals.append(f"forbidden-in-source-file:{hit}:{sf[:80]}")
 
     # freshness fingerprint (ENG-C11): inventory + policy bytes + pin identity
-    pf = json.load(open(preflight_path))
     h = hashlib.sha256()
     for e in sorted(pf["included"], key=lambda x: x["logical"]):
         h.update(e["logical"].encode()); h.update(str(e["size"]).encode())

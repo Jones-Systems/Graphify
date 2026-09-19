@@ -1,0 +1,13 @@
+# kg-refresh.timer - fires kg-refresh.service nightly at 03:30 (+/- 45min).
+[Unit]
+Description=Nightly 03:30 Graphify KG refresh (fixed 45min jitter)
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=45min
+FixedRandomDelay=true
+Persistent=true
+Unit=kg-refresh.service
+
+[Install]
+WantedBy=timers.target

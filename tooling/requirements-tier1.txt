@@ -1,0 +1,10 @@
+# Tier-1 capability dependencies (W1-a capsules R13/R12/R16).
+# Install into the runtime venv:
+#   ~/.agent-references/graphify/tool/env/bin/python -m pip install -r tooling/requirements-tier1.txt
+
+pyarrow==25.0.1  # R13 snapshot parquet (zstd)
+duckdb==1.5.5  # R13 RO parquet views (capsule pin)
+fastembed==0.8.0  # R12 ONNX embeddings
+onnxruntime==1.29.0  # R12 runtime (capsule floor >=1.20)
+sqlite-vec==0.1.9  # R12 vec0 float/int8/bit store
+blake3==1.0.9  # R16 source fingerprints

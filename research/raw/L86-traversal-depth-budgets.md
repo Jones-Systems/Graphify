@@ -1,0 +1,61 @@
+# L86 — Token-budget-aware traversal depth selection
+
+Date recorded: 2026-08-25. Public-source claims about traversal and emitted
+context budgeting are retained as recorded. No target graph size, runtime,
+memory budget, package layout, or deployment fit is established.
+
+## Scope read (what "budget" means here)
+The constrained resource considered here is the token size of emitted evidence
+handed downstream. "Traversal depth" therefore decomposes into: (a) how many
+nodes are expanded, (b) how many branches survive pruning, and (c) how many
+survive serialization. Published approaches split four ways: classical
+budget-bounded heuristic search, graph-RAG context budgets, token-cost-driven
+pruning, and cross-stage budget allocation.
+
+## Findings table
+
+|Item|Type(tool/repo/strategy/technique)|URL|License|Maturity|StackFit0-5|EffGain0-5|EffectGain0-5|QualGain0-5|AdoptCost0-5(lower=better)|Conf(H/M/L)|KeyEvidence|
+|---|---|---|---|---|---|---|---|---|---|---|---|
+|Score-per-token best-first frontier (the published "budget-constrained BFS")|technique|https://www.sigmod.org/publications/dblp/db/conf/vldb/ChakrabartiBD99.html|n/a (pattern)|Very high (1999, still standard)|5|5|4|3|1|H|Focused crawler = priority frontier popped by predicted utility under a HARD fetch budget B, stop when spent (Chakrabarti/van den Berg/Dom VLDB 1999; URL-ordering precedent Cho & Garcia-Molina WWW7); greedy u_t=argmax S(u) until \|V_t\|≥B — direct template for node-expansion budgeting|
+|IDA*-style escalating depth/threshold under leftover budget|technique|https://www.sciencedirect.com/science/article/pii/0004370285900840|n/a (pattern)|Very high (Korf 1985, AIJ)|5|4|3|4|1|H|Depth-first iteration with f=g+h>T pruning; threshold raised to MINIMUM EXCEEDED f-value; linear memory; canonical "start cheap/shallow, deepen only while resources remain" policy — maps to escalating D∈{1,2,3,...} while token budget holds|
+|Weighted A* / ε-admissible bounded suboptimality|technique|https://dblp.org/rec/journals/ai/Pohl70|n/a (pattern)|Very high (Pohl 1970, AIJ)|4|3|2|3|1|H|f_w(n)=g(n)+w·h(n) guarantees solution cost ≤ w·C*; inflation factor w is the formal dial converting EXTRA SEARCH EFFORT into QUALITY GUARANTEE — the theoretical frame for "more budget ⇒ better context bound"|
+|ARA* anytime repairing search|technique|https://papers.neurips.cc/paper_files/paper/2003/file/ee8fe9093fbbb687bef15a38facc44d2-Paper.pdf|n/a (pattern)|High (NeurIPS/NIPS 16, 2003)|3|3|3|4|3|H|Begin with large ε (fast greedy solution), DECREASE ε as budget remains, reuse OPEN/CLOSED/INCONS sets instead of restarting; an anytime answer exists AT EVERY POINT with provable ≤ε·C* bound. Venue note: NeurIPS 2003, NOT JAIR — JAIR 28 (2007) 267-297 is Hansen & Zhou "Anytime Heuristic Search"|
+|Microsoft GraphRAG local-search context token budgeting|repo (reference impl)|https://microsoft.github.io/graphrag/config/yaml/|MIT|High (production, active 2026)|5|3|4|3|2|H|`query.local_search.max_context_tokens` (default 5000) split PROPORTIONALLY: text_unit_prop=0.5, community_prop=0.1, remainder (local_prop=1−sum) to entities/relationships/covariates; conversation history deducted FIRST; records added until component budget reached, overflow REVERTS last record; `top_k_entities/top_k_relationships` NEVER override the token budget (config/yaml docs + query/structured_search/local_search/mixed_context.py, checked 2026-08-25)|
+|LightRAG per-source token caps|repo|https://github.com/HKUDS/LightRAG|MIT|High (v1.5.6 stable 2026-08-06; v1.5.7rc2 2026-08-19)|4|3|3|2|1|H|MAX_ENTITY_TOKENS=6000 / MAX_RELATION_TOKENS=8000 / MAX_TOTAL_TOKENS=30000 defaults, overridable PER QUERY via QueryParam(top_k=60, chunk_top_k=20, ...); chunk budget computed as total − ACTUAL entity tokens − ACTUAL relation tokens; documented invariant entity+relation < total (docs/ProgramingWithCore.md, checked 2026-08-25)|
+|PathRAG flow-based pruning + path-level token economy|technique|https://ojs.aaai.org/index.php/AAAI/article/view/40268 (arXiv:2502.14902)|n/a (paper; community impls on GH)|High (AAAI 2025; arXiv 2025-02-20)|5|4|4|4|2|H|Resource flow S(v)=Σ αS(v_j)/\|out(v_j)\| with branch PRUNED when S(v_i)/\|out(v_i)\|<θ (soft decay replaces hard hop cutoff); keep global top-K paths by mean node resource (K=15); measured: N=40,K=15 → −13.69% tokens vs LightRAG at BETTER quality; PathRAG-lt N=20,K=5 → −40.41% tokens at parity (50.56% win-rate); complexity O(N²/((1−α)θ)) on the paper's example graphs|
+|HippoRAG 2: PPR decay REPLACES explicit depth caps|repo/technique|https://arxiv.org/abs/2502.14802|MIT (OSU-NLP-Group/HippoRAG)|High (paper 2025-02-20; PyPI hipporag 2.0.0a4 2025-06-24, README refs 2.0.0a5)|5|3|4|4|1|H|Concept-seeded Personalized PageRank propagates relevance smoothly through the KG — hop-count depth limiting becomes less central because distance decay is built into PPR mass; token budget shifts to top-k passage/entity assembly after ranking. This is a design analogue, not target validation.|
+|Adaptive-RAG query-complexity routing|strategy|https://aclanthology.org/2024.naacl-long.389/|Apache-2.0 (starsuzi/Adaptive-RAG)|High (NAACL-HLT 2024, pp.7036-7050)|4|4|3|2|2|M|The cited system routes queries among retrieval depths with a classifier. A non-generative analogue based on lexical/vector agreement is an unvalidated design hypothesis; no depth tiers or token budgets are accepted.|
+|Think-on-Graph beam pruning (width × depth as the two budget knobs)|strategy|https://arxiv.org/abs/2307.07697|Apache-2.0 (GasolSun36/ToG — verified NOT MIT)|High (ICLR 2024 oral; v6 2024-03-24)|3|2|3|4|2|M|An LLM-guided beam search bounds branching with beam width and hops with maximum depth. A CPU-only, non-generative port would need lexical or embedding scorers and remains unvalidated.|
+|FrugalGPT budget-constrained cascade allocator|strategy|https://arxiv.org/abs/2305.05176|Apache-2.0 (stanford-futuredata/FrugalGPT)|High (TMLR 2024-12; arXiv 2023-05-09)|3|3|3|2|2|M|Optimizes call sequence + escalation thresholds UNDER an explicit cost constraint (reported cost cuts 98.3%/73.3%/59.2% matching best single model); transpose from model-cascade to STAGE-cascade: split the context budget across BM25 leg / vector leg / graph expansion / answer reserve with learned or hand thresholds|
+|TALE token-budget-aware reasoning (elasticity caveat)|technique|https://arxiv.org/abs/2412.18547|n/a (code: GeniusHTX/TALE)|Medium-high (ACL 2025 Findings)|3|2|2|3|1|M|Documents "token elasticity": budgets pushed TOO LOW backfire (GPT-4o-mini example: vanilla 258 tok; budget 50→86; budget 10→157 — WORSE than mid budget); oracle budget via binary search, deployment via zero-shot estimator. Lesson for traversal: enforce MIN-VIABLE SERIALIZATION per node and per-leg floors; never let dynamic shrinking produce degenerate stub contexts|
+|cspy — exact Resource-Constrained Shortest Path solver|tool|https://pypi.org/project/cspy/|MIT|Stale (v1.0.3, 2023-01-05; C++ extension)|2|1|1|2|3|M|Label-setting + Lagrangian-relaxation algorithms solve EXACT budget-vs-quality tradeoffs on single s-t paths; wrong SHAPE for multi-seeded neighborhood expansion and overkill at 10^4 nodes; listed for completeness as the formal RCSP reference point|
+
+## Deployment boundary
+
+Apply these algorithms only after benchmarking candidate expansion,
+serialization cost, evidence retention, and memory use on an authorized target
+corpus.
+
+## Verdict
+The recorded candidate combines an explicit emitted-context ledger with a
+score-per-token frontier and a distance-decaying graph score. Published
+systems provide useful control surfaces and examples, but they do not validate
+this combination. Token estimation, component reserves, marginal-value score,
+depth policy, and minimum evidence coverage all require a target evaluation;
+the numeric settings from the cited systems are examples rather than defaults.
+
+## Evidence log (all accessed 2026-08-25)
+- Chakrabarti, van den Berg, Dom, "Focused Crawling: A New Approach", VLDB 1999 (sigmod.org dblp entry + PDF mirrors): priority-frontier formulation, classifier/distiller signals, hard fetch budget.
+- Cho & Garcia-Molina, "Efficient Crawling Through URL Ordering", WWW7 (archives.iw3c2.org): importance-ordering under visit budget.
+- Korf, "Depth-first iterative-deepening: An optimal admissible tree search", Artificial Intelligence 27 (1985), sciencedirect.com/science/article/pii/0004370285900840.
+- Pohl, "Heuristic search viewed as path finding in a graph", Artificial Intelligence 1 (1970), sciencedirect.com/science/article/pii/000437027090007X; weighted-A* bound C ≤ w·C* corroborated via CiteSeerX survey material.
+- Likhachev, Gordon, Thrun, "ARA*: Anytime A* with Provable Bounds on Sub-Optimality", NIPS 16 (2003), papers.neurips.cc PDF; venue disambiguation vs Hansen & Zhou JAIR 28 (2007) 267-297 confirmed via CMU RI publications page.
+- microsoft/graphrag: docs config/yaml (max_context_tokens default 5000, text_unit_prop 0.5, community_prop 0.1, validation community+text ≤ 1) and packages/graphrag/graphrag/query/structured_search/local_search/mixed_context.py (history-deducted-first, add-until-budget, revert-on-overflow, top_k non-override) + examples_notebooks/local_search (context 12_000 vs generation 2_000).
+- HKUDS/LightRAG releases page: v1.5.6 stable 2026-08-06, v1.5.7rc2 2026-08-19; docs/ProgramingWithCore.md: MAX_{ENTITY,RELATION,TOTAL}_TOKENS defaults 6000/8000/30000, per-query QueryParam overrides, chunk-budget formula.
+- PathRAG: AAAI 2025 paper page ojs.aaai.org/index.php/AAAI/article/view/40268 (= arXiv:2502.14902): flow equations, θ-pruning rule, K=15, N=40/20, token costs 14,438/9,968 vs LightRAG 16,728, win-rate 50.56%, complexity O(N²/((1−α)θ)) on ~10^4-node graphs.
+- HippoRAG 2: arXiv:2502.14802 (2025-02-20); github.com/OSU-NLP-Group/HippoRAG LICENSE=MIT (OSU NLP 2025); pypi.org/project/hipporag shows 2.0.0a4 (2025-06-24); packaging discrepancy noted (README refs 2.0.0a5; Releases page still renders v1.0.0) — pin a commit if ever vendored.
+- Jeong et al., "Adaptive-RAG", NAACL-HLT 2024 pp.7036-7050 (aclanthology.org/2024.naacl-long.389/); github.com/starsuzi/Adaptive-RAG Apache-2.0, T5-Large classifier, silver+binary label generation.
+- Sun et al., "Think-on-Graph", ICLR 2024 (arXiv:2307.07697v6, 2024-03-24): iterative beam search on KG, width×depth budget; github.com/GasolSun36/ToG license verified Apache-2.0 (README statement; NOT MIT).
+- Chen, Zaharia, Zou, "FrugalGPT", arXiv:2305.05176 (2023-05-09), TMLR 2024-12 accepted version on lingjiaochen.com; github.com/stanford-futuredata/FrugalGPT Apache-2.0; cost cuts 98.3% HEADLINES / 73.3% OVERRULING / 59.2% COQA.
+- Han et al., "Token-Budget-Aware LLM Reasoning" (TALE), arXiv:2412.18547, ACL 2025 Findings (aclanthology.org/2025.findings-accompanied PDF 2025.findings-acl.1274): token-elasticity numbers (258→86@50→157@10), TALE-EP 81.03% acc @148.72 tok vs CoT 83.75% @461.25 tok (−67% output tokens, <3pt acc drop); code GeniusHTX/TALE.
+- torressa/cspy: pypi.org/project/cspy latest 1.0.3 uploaded 2023-01-05 (some wheels 2024-06-10), MIT per repo github.com/torressa/cspy; JOSS paper 10.21105/joss.01655.

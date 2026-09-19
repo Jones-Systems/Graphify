@@ -1,0 +1,48 @@
+# L47 — Neo4j Community local storage: JVM heap reality, Cypher-vs-networkx value, ops-weight verdict
+
+Investigated 2026-08-25 by lane L47 (T7 storage). Question: does Neo4j Community Edition as a local always-on store earn its operational weight on this shared host vs the existing networkx/node-link-JSON pattern?
+
+## Local ground truth (verified 2026-08-25)
+
+- Host (/proc/meminfo, live): MemTotal 62.8 GiB, MemAvailable 23.8 GiB right now, SwapTotal = 0 (NO SWAP). Base load ~36.7 GiB effectively unreclaimable (AnonPages 17.8 GiB + Shmem/tmpfs 18.8 GiB — shmem cannot be reclaimed without swap); ~23 GiB clean file-cache/slab kernel-reclaimable. The MemAvailable >= 3072 MiB burst-floor rule therefore leaves ~20 GiB burst budget that a resident JVM heap erodes 1:1; with no swap the OOM killer is the only backstop.
+- Actual graph scale (Graphify canary spec, local): pinned graphifyy==0.9.16 emits NetworkX node-link graph.json (validation-capped 512 MiB). Largest documented checkpoint: ~1M-LOC ERPNext = 22,620 nodes / 48,710 edges. Query surface in use: query_graph, get_node, get_neighbors, shortest_path + SCC/condensation/DAG-depth/PageRank/betweenness diagnostics (L02 briefs) + PPR-over-KG fusion.
+- Precedent: BusinessLessons CAP-022 rules 'Neo4j/FalkorDB exports only if the corpus ever outgrows file-based retrieval', post-V1 owner decision. Graphify ships --neo4j-push bolt://localhost:7687 as optional export, not runtime dep.
+
+## Heap-tuning reality on THIS host
+
+- Neo4j defaults assume a dedicated box: unset server.memory.heap.max_size -> heuristic sized against visible RAM (64 GB host => tens of GB committed [INFERENCE from documented memrec ratio: 16g box -> heap 5g + pagecache 7g]); unset pagecache -> ~50% x (RAM - heap), capped 70x heap. Explicit pinning mandatory.
+- Docs require 2-4 GB OS/native reserve on a DEDICATED server; we have none. Minimums published: 2 GB dev / 8 GB recommended server.
+- Recommended initial_size = max_size (avoid heap-expansion full-GC pauses) conflicts with elasticity: heap is anonymous, unswappable, unreclaimable; G1 returns little to OS. Page-cache tier (mmap) merely evicts under pressure (reload stalls); heap tier OOMs. SwapTotal=0 => OOM-kill mid-write means WAL-recovery restarts.
+- Correctly pinned minimal profile (heap init=max 512M-1G, pagecache 512M-1G, ~0.6-0.9 G JVM native metaspace/netty/Lucene) = ~1.7-2.9 GiB steady RSS, needs systemd MemoryHigh=2048M/MemoryMax=2560M guardrail. Memory settings NOT dynamic: every resize = conf edit + restart.
+- Backup: Community = OFFLINE dump/load only (stop -> dump -> start; no hot/incremental; dumps exclude users/roles). Mitigating-but-undermining fact: the Neo4j copy is DERIVED from graph.json, so it needs no backup if treated as rebuildable — removing the main reason for 24/7 residency.
+- Extra ops ledger: OpenJDK 21 dependency; calendar-version cadence (2026.07.1 released 2026-08-07; quarterly deprecation churn); dbms.*->server.* config-namespace rename history; Bolt 7687/HTTP 7474 auth hygiene; JVM CVE treadmill; Community = exactly one standard database.
+
+## Cypher ergonomics vs networkx+JSON for OUR patterns
+
+Every pattern in use maps to an existing one-liner: get_node/get_neighbors -> G.nodes/G.adj; shortest_path -> nx.shortest_path; k-hop -> descendants_at_distance/ego_graph; SCC/condensation -> Tarjan; PageRank/betweenness -> nx or scipy; PPR fusion -> nx.pagerank(personalization=...) or CSR power iteration (better past ~1e6 edges). Cypher's genuine edge = ad-hoc variable-length pattern queries with predicates + Browser viz — real dev-time value, occasional demand, purchasable on-demand without residency. Adoption costs: second query language beside DuckDB SQL/LanceDB/tantivy; per-snapshot re-import because projections are immutable/versioned (L02 design) -> DB becomes redundant derived index of a derived index duplicating freshness-fingerprint logic. At 10^4-10^5 edges/repo (<10^6 aggregated), JSON loads in seconds; server graph DBs pay off around >10^7 relationships or concurrent multi-consumer access — neither exists here.
+
+## Findings
+
+|Item|Type(tool/repo/strategy/technique)|URL|License|Maturity|StackFit0-5|EffGain0-5|EffectGain0-5|QualGain0-5|AdoptCost0-5(lower=better)|Conf(H/M/L)|KeyEvidence|
+|---|---|---|---|---|---|---|---|---|---|---|---|
+|Neo4j Community 2026.07.1 as always-on KG service|tool|https://neo4j.com/deployment-center/|GPLv3 (LICENSE.txt verified)|Very High|2|1|1|2|4|H|Released 2026-08-07; Java 21/25; Debian 13 OK; 1 database max; offline-only dump/load backups excluding users/roles; heap/pagecache heuristics sized for dedicated boxes|
+|Pinned-memory Neo4j profile (heap init=max 512M-1G, pagecache 512M-1G, systemd MemoryHigh/MemoryMax)|technique|https://neo4j.com/docs/operations-manual/current/performance/memory-configuration/|n/a (ops practice)|High|3|1|1|1|2|H|Docs: set initial=max to avoid GC pauses; memory settings non-dynamic (restart); official Docker image defaults tiny 512M/512M; no swap on host -> OOM-kill lands on JVM under bursts|
+|Neo4j ephemeral dev-sandbox (start on demand -> graphifyy --neo4j-push -> Browser explore -> teardown)|strategy|local: Graphify v0.9.16 CLI flags|n/a|High|4|2|2|2|2|H|Uses already-shipped --neo4j/--neo4j-push export; zero residency, zero backup duty (derived data), floor untouched between sessions; matches CAP-022 posture|
+|networkx 3.6.1 + node-link JSON (status quo system-of-record)|technique|https://pypi.org/project/networkx/|BSD-3-Clause|Very High|5|0|1|2|0|H|Native format of pinned graphifyy==0.9.16 output (zero translation); 62M weekly downloads; largest repo graph 22,620n/48,710e loads in seconds; deterministic freshness fingerprints already file-based|
+|scipy.sparse CSR + power-iteration PPR for the fusion leg|technique|https://scipy.org/|BSD-3|Very High|5|3|3|2|1|H|PPR-over-KG already the fusion backbone; CSR matvec power iteration scales past nx.pagerank pure-Python limits; composes with DuckDB/parquet snapshots; no daemon|
+|Apache AGE 1.7.0 (PG17) — Cypher inside the already-running Postgres|tool|https://github.com/apache/age|Apache-2.0|Mid|4|2|2|2|2|M|PG17 supported since 1.6.0 (2025-09-22); 1.7.0-for-PG17 listed 2026-02-11 but release tag shows PG17/v1.7.0-rc0 inconsistency (verify exact tag); fits L20 ratified central-PG research-DB pattern — one engine fewer than a second graph DB|
+|LadybugDB v0.19.0 embedded Cypher (Kuzu successor)|tool|https://github.com/LadybugDB/ladybug|MIT (inherited from Kuzu; confirm LICENSE in-tree)|Young fork|3|1|1|1|2|M|Kuzu archived 2025-10-10 at v0.11.3; Ladybug v0.19.0 shipped 2026-07-30, active (1.6k stars); embedded = no daemon/floor cost, but governance concentrated post-fork — pin version, hold exit plan|
+|Kuzu v0.11.x (upstream archived)|tool|https://github.com/kuzudb/kuzu|MIT|Dead upstream|2|0|0|0|3|H|Repo archived/read-only 2025-10-10; no security patches or maintained extensions forward; excluded except as frozen artifact|
+|Memgraph Community|tool|https://github.com/memgraph/memgraph|BSL 1.1 (source-available, not OSI)|High|1|1|1|1|3|H|In-memory-primary storage -> RSS proportional to whole graph (vendor benchmark ~400 MB @ 100k n/1.77M e) — wrong economics vs hard MemAvailable floor; BSL mismatches permissive-license preference|
+
+### Verdict
+Top pick: stay on networkx 3.6.1 + node-link JSON with scipy CSR for PPR — native format of the pinned graphifyy pipeline, covers 100% of observed query patterns at 10^4-10^5-edge scale, zero daemons/heap tuning/floor erosion. Always-on Neo4j Community does NOT earn its ops weight here: ~2-3 GiB unswappable resident heap+native buys ergonomic comfort for queries already expressed in-process, plus JDK upkeep, calendar-cadence upgrades, and offline-only backups of derived data. If interactive Cypher/Browser exploration is wanted: ephemeral dev-sandbox (existing graphifyy --neo4j-push, heap/pagecache pinned 512M each, teardown after) — never systemd-resident. Escalation triggers reopening persistent Cypher: aggregate >~10^7 relationships, concurrent multi-consumer writes, routine heavy ad-hoc pattern querying — then prefer Apache AGE 1.7.0 inside the already-running PG17 cluster (pending rc-tag verification) over a second database service.
+
+## Evidence log (all accessed 2026-08-25)
+- neo4j.com operations manual: performance/memory-configuration (heap/pagecache formulas, initial=max guidance, 2-4 GB OS reserve), configuration-settings + dynamic-settings (non-dynamic memory settings), neo4j-admin-memrec (recommendation examples), installation/requirements (Java 21/25, Debian 13, 2 GB dev / 8 GB server mins, 2026.05 deprecations), backup-restore + modes (Community offline dump/load only, users/roles excluded), database-administration (one standard database max). Release 2026.07.1 (2026-08-07).
+- raw.githubusercontent.com/neo4j/neo4j HEAD LICENSE.txt: GPL-3.0 verbatim.
+- pypi.org/project/neo4j: driver 6.2.0, Python >=3.10 incl 3.13 (host-compatible); optional Rust ext.
+- pypi.org/project/networkx: 3.6.1, BSD-3, >=3.11.
+- Local: Codex-System canary test-plan (graphifyy==0.9.16 pin, node-link schema, 512 MiB cap, MCP tool list, ERPNext 22,620n/48,710e); BusinessLessons CAP-022 staging capture (deferred Neo4j/FalkorDB); L02 projection brief (SCC/condensation/PageRank diagnostics, immutable versioned projections).
+- github.com/kuzudb/kuzu (archived 2025-10-10); LadybugDB releases (v0.19.0 2026-07-30); apache/age README/releases/discussion #2305 (PG11-18; 1.7.0-for-PG17 2026-02-11, rc0 tag caveat); memgraph licenses/BSL.txt + storage benchmarks blog.
+- /proc/meminfo live read: figures quoted.

@@ -1,0 +1,36 @@
+# L82 — T12 freshness audit: `graphify update --force` semantics (pinned graphifyy==0.9.16)
+
+Source audited (read-only): ~/.agent-references/graphify/tool/env/lib/python3.13/site-packages/graphify/ — graphifyy 0.9.16 (dist-info verified), MIT (c) 2026 Safi Shamsi, wheel sha256-pinned per PRD-C3, upstream commit a0e4a1c6bd3a99edfdd84ad30927003f51face6a.
+
+## 1. What `update` actually re-extracts
+- Dispatch cli.py:1237-1275: `--force` flag OR env GRAPHIFY_FORCE=1|true|yes; optional single path arg; else scan root recovered from graphify-out/.graphify_root marker, else cwd.
+- Calls _rebuild_code(watch_path, force, no_cluster, block_on_lock=True) with changed_paths=None => FULL-CORPUS mode: detect() re-walks entire root (persisted --exclude patterns from .graphify_build.json re-applied, #1886) -> code files + docs with AST extractors (.md/.mdx/.qmd).
+- Per-file mediation is the CONTENT-HASH CACHE (cache/ast/v0.9.16/<sha256(body+relpath-lowercased)>.json, cache.py load_cached): hit => fragment reused verbatim; miss => tree-sitter parse. 'Incremental' behavior is purely cache-derived. Stat fastpath (size+mtime_ns, make-style 1s NFS window) only avoids re-hash, never forces a stale hit past a hash mismatch.
+- JS/TS family (.js .jsx .mjs .ts .tsx .mts .cts .vue .svelte, extractors/models.py:11) BYPASS cache: always re-parsed. Markdown hashes strip YAML frontmatter (_body_content) => metadata-only .md edits never invalidate.
+- Reconcile (watch.py:405-563): every fresh node stamped _origin='ast' (extract.py:4964-4967). Full rebuild replaces ALL prior ast-origin nodes under watch root; semantic/LLM-tier nodes (no _origin) PRESERVED even on full rebuild. Deletion eviction provenance-blind; edges kept only if both endpoints survive AND ast-origin edges from re-extracted sources replaced (#1865 tier-scoping); hyperedges kept only if ALL members survive.
+- Write: no-change short-circuit on canonical topology/graph+report compare; else shrink guard, backup-if-protected, atomic tmp->replace; .graphify_root + ast manifest refreshed; needs_update flag cleared. Non-code docs/papers/images NEVER touched by update (needs_update flag path only).
+- Concurrency: interactive update BLOCKS on per-repo flock (block_on_lock=True); hook/watch callers queue to .pending_changes (#1059); full-corpus rebuild drains-and-supersedes the queue.
+
+## 2. When --force is needed
+--force does exactly ONE thing: bypasses _check_shrink (watch.py:660-706), which refuses overwrite when candidate has FEWER nodes than existing AND the loss is unaccounted. Post-#1116 accounting permits shrink when every lost node's source_file is in rebuilt+deleted set; full-corpus update marks ALL watched files rebuilt, so nearly every attributable loss passes. Genuine --force cases: lost nodes with NO source_file; losses attributable to no rebuilt/deleted file (incremental paths only); deliberate commit of suspected-partial extraction. NOT needed for: deletion refactors (had_explicit_deletions skips guard), symbol removal in re-extracted files, purge of newly-excluded files via full rebuild.
+GOTCHAS: (a) --force does NOT bypass extraction cache, does NOT force re-parse, does NOT purge semantic-tier leftovers — true from-scratch requires deleting graphify-out/cache/ast/ (version bump auto-sweeps v* dirs). (b) `graphify extract --force` is a silent NO-OP in 0.9.16: extract's arg loop skips unknown flags (cli.py:2048-2049 `else: i += 1`) although cli.py:419 recommends it for ID-scheme migration.
+
+## 3. Silent drop / stale-retention edge cases vs full-build
+DROPS: edges vanish when either endpoint lost (both-endpoint rule); hyperedge dropped if ANY member lost; transient extractor exception on a re-extracted file yields empty fragment whose loss passes shrink accounting (warn-only stderr #1666/#1745; self-heals next run since empties never cached); incremental explicit change-list evicts a listed-but-now-filtered path EVEN THOUGH alive (watch.py:883-893).
+STALE RETENTION: fail-closed rule keeps nodes of alive-but-excluded files across incremental updates ('ignore rules changed?', watch.py:452-497) — purged only by full update's AST-ownership rule; semantic-tier nodes survive every update forever.
+GUARD WEAKNESS: broken-env mass-loss (missing optional grammar => '#1745 contributes nothing') + --force commits shrunken graph as current; mitigate via promote.sh validation+fingerprint gating.
+
+## 4. Contrast: structural-offline full-build path
+tools/graphify/offline_extract.py calls gx._safe_extract_with_xaml_root per staging file directly: NO cache read/write, NO reconcile/preserve, NO shrink guard, NO lock — fresh graph each run over the preflight staging view, errors/empties counted. Cannot inherit stale fragments (nor reuse work). If T12 refresh automation ever adopts `update`, fingerprint cache/ast/v*/ + stat-index.json + .graphify_build.json + .graphify_root alongside sources and route output through validate.py/promote.sh before repointing current.
+
+|Item|Type|URL|License|Maturity|StackFit|EffGain|EffectGain|QualGain|AdoptCost|Conf|KeyEvidence|
+|---|---|---|---|---|---|---|---|---|---|---|---|
+|update dispatch: GRAPHIFY_FORCE env/flag, .graphify_root recovery, block-on-lock|technique|site-packages/graphify/cli.py:1237-1290|MIT|stable 0.9.16|3|2|2|2|1|H|env-or-flag force; cwd fallback if marker absent|
+|Full-corpus _rebuild_code: detect() rescan + persisted excludes + pending queue|technique|site-packages/graphify/watch.py:767-1000|MIT|mature (#1059,#1886)|4|4|3|3|2|H|changed_paths=None on CLI; flock; drain-and-supersede|
+|Versioned content-hash AST cache invalidation|technique|site-packages/graphify/cache.py:344-420|MIT|mature (#1666,#1774)|4|4|3|3|2|H|key=sha256(body+relpath.lower()); v{version} auto-sweep; JS bypass; md frontmatter ignored|
+|Reconcile/eviction: fail-closed retention, tier-scoped edges, hyperedge all-members|technique|site-packages/graphify/watch.py:380-563|MIT|mature (#1865)|4|3|4|4|2|H|alive-but-excluded kept; edges need both endpoints; hyperedges all members|
+|Shrink guard + #1116 accounting (real --force triggers)|technique|site-packages/graphify/watch.py:660-706|MIT|mature (#1116)|4|3|4|4|1|H|blocks only unattributable/no-source_file losses; deletions skip guard|
+|--force scope limits; extract --force silent no-op|strategy|cli.py:1238-1244,2048-2049; __main__.py:538-540|MIT|verified 0.9.16|5|2|4|5|0|H|force != cache bypass; unknown extract flags skipped though cli.py:419 recommends them|
+|Structural-offline full build vs update continuity (offline_extract.py)|strategy|tools/graphify/offline_extract.py|project (MIT lib)|deployed, 18 corpora promoted|5|1|3|4|0|H|direct _safe_extract_with_xaml_root loop; fresh graph per run|
+
+VERDICT: top takeaway — `update --force` is ONLY a shrink-guard override, never a cache invalidator; true from-scratch needs rm -rf <out>/cache/ast/ (documented `extract --force` remedy is a no-op in 0.9.16). Keep immutable full builds as the promotion path for T12 freshness (deterministic, no inherited state); if update enters refresh automation, fingerprint cache/ast/v*/, stat-index.json, .graphify_build.json, .graphify_root as freshness inputs and gate every update output through validate.py/promote.sh before repointing current.

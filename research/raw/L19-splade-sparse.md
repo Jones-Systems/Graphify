@@ -1,0 +1,38 @@
+# LANE L19 — SPLADE sparse neural retrieval: local CPU/onnx feasibility + learned-sparse alternatives
+
+> **Evidence status:** the underlying report was committed at reviewed
+> revision `d1dbac36208b0066fc8907bd9fe9408fc5c51a60`; this file is a
+> sanitized derivative. Its immutable pre-commit origin is unavailable in
+> this repository. Retain it as origin-unbound research; exclude it from
+> validated synthesis until its evidence is independently re-established.
+> Linked sources are citations, not current-version verification.
+
+Recorded date: 2026-08-25. The source comparison concerns CPU-capable,
+offline learned-sparse retrieval and permissive-license alternatives. No
+later source currentness, deployment hardware, or workload fit is claimed.
+
+## Findings table
+
+|Item|Type(tool/repo/strategy/technique)|URL|License|Maturity|StackFit0-5|EffGain0-5|EffectGain0-5|QualGain0-5|AdoptCost0-5(lower=better)|Conf(H/M/L)|KeyEvidence|
+|---|---|---|---|---|---|---|---|---|---|---|---|
+|OpenSearch neural-sparse doc-v2-distill (doc-side-only SPLADE)|model|https://huggingface.co/opensearch-project/opensearch-neural-sparse-encoding-doc-v2-distill|Apache-2.0|High (prod, shipped in OpenSearch)|5|4|4|4|1|H|67M params, ~268 MB safetensors, 30522-dim sparse out; BEIR-13 avg nDCG@10 50.4 vs BM25 45.6 (+10.5% rel); query side = tokenizer only, ZERO neural inference at query time (HF card + sbert.net pretrained_models, checked 2026-08-25)|
+|OpenSearch neural-sparse v2-distill (bi-encoder, query+doc encoders)|model|https://huggingface.co/opensearch-project/opensearch-neural-sparse-encoding-v2-distill|Apache-2.0|High|4|2|5|4|1|H|Same 67M DistilBERT arch; BEIR-13 52.8 (best open learned-sparse score found); query-side encoder adds ~10-30 ms/query on CPU ONNX (est. from fastembed SPLADE++ 50-100 ms/query reports, smaller distilbert)|
+|naver/splade-v3 (reference SPLADE SOTA)|model|https://huggingface.co/naver/splade-v3|CC BY-NC-SA 4.0 (NON-COMMERCIAL)|High|3|1|5|5|5|H|MS MARCO dev MRR@10 40.2, BEIR-13 51.7 (arXiv:2403.06789, 2024-03-11); license requires separate legal and usage review — all naver SPLADE checkpoints share NC-SA terms|
+|prithivida/Splade_PP_en_v1 (+v2 successor)|model|https://huggingface.co/prithivida/Splade_PP_en_v1|Apache-2.0|Medium-High|4|1|3|3|1|H|BERT-base 110M independent SPLADE++; MRR@10 37.2 in-domain / 48.7 BEIR-OOD; ~113 active tokens/doc (low FLOPs vs naver 126-234); ships ONNX; packaged by fastembed at 0.532 GB|
+|fastembed SparseTextEmbedding (ONNX runtime wrapper)|tool|https://qdrant.github.io/fastembed/examples/Hybrid_Search/|Apache-2.0|High|4|2|2|2|1|H|ONNX/CPU packaging incl. Qdrant/bm25 (0.010 GB), bm42 (0.09 GB), Splade_PP (0.532 GB); real-world CPU reports: 0.55 s/doc batched to ~3 s/doc unoptimized indexing, 50-100 ms/query SPLADE++ encoding (fastembed GH #539, #648)|
+|sentence-transformers >=5.0 SparseEncoder|tool|https://huggingface.co/blog/train-sparse-encoder|Apache-2.0|High (v5.0.0 2025-07-01)|5|3|2|3|1|H|Unified API for SPLADE / inference-free SPLADE / CSR; loads opensearch-* and prithivida/* models; v5.1.0 (2025-08-06) added ONNX+OpenVINO export with reported 2-3x sparse-inference speedup + int8 quantization; py3.13-compatible|
+|ONNX Runtime dynamic-int8 BERT pipeline (optimize -> quantize_dynamic)|technique|https://onnxruntime.ai/docs/performance/model-optimizations/quantization.html|MIT|High|5|3|1|1|1|H|First cp313 wheels in onnxruntime 1.20.0 (2024-10); PyPI showed 1.28.0 on the recorded date. The report cites workload-dependent int8 speedups and a model-size reduction from roughly 268 MB to 70 MB; deployment RSS and speed remain unmeasured.|
+|BGE-M3 sparse lexical-weights head|model|https://huggingface.co/BAAI/bge-m3|MIT|High|2|0|4|4|3|M|568M XLM-R-large, 250k vocab, learned lexical weights (ReLU projection); CPU int8 C impl ~1.8k input tok/s (Soju06/bge-m3.c); PyTorch CPU ~4-6 seq/s reports (FlagEmbedding #1295) — only worth RAM/compute if its dense+multilingual heads are also wanted|
+|Inference-free / two-phase asymmetric SPLADE (neural doc expansion + tokenizer-only queries)|technique|https://github.com/qdrant/fastembed/issues/648|n/a (pattern)|Emerging->prod (OpenSearch ships it)|5|5|3|3|1|M|Benchmark cited in fastembed #648: median query latency 57 ms -> 4.3 ms with <1.3% relative quality drop; identical design to OpenSearch two-phase neural search; converts SPLADE query path to BM25-class cost|
+|LanceDB FTS/BM25 + hybrid RRF (NO native learned-sparse index)|tool|https://docs.lancedb.com/search/full-text-search|Apache-2.0|High|5|4|1|2|1|H|Docs checked 2026-08-25: native FTS inverted index scores BM25, hybrid=dense ANN+FTS w/ RRF reranker; no API for sparse-vector (SPLADE CSR) dot-product retrieval — SPLADE postings need external inverted index or rerank-over-candidate-pool|
+|docTTTTTquery / doc2query-T5 document expansion|strategy|https://github.com/castorini/docTTTTTquery|Apache-2.0 (checkpoints)|High (2019, classic)|2|4|3|2|2|H|MS MARCO passage test MRR@10 18.6 -> 27.2 (+46% rel) with retrieval still vanilla BM25 (Nogueira & Lin 2019); but T5-base generation ~40 queries/doc is expensive offline CPU and OOD gains lag SPLADE-style contextual expansion|
+|Qdrant/bm42-all-minilm-l6-v2-attentions|model|https://qdrant.github.io/fastembed/examples/Supported_Models/|Apache-2.0|Experimental (effectively frozen)|3|4|1|1|1|M|Attention-weighted token weighting, 0.09 GB ONNX, near-BM25 query cost; positioned between BM25 and SPLADE but little third-party validation since 2024|
+|Cohere sparse embeddings (embed-v3/v4 API)|service|https://docs.cohere.com/docs/private-deployment-overview|Proprietary cloud — separate service review required|High|0|2|4|4|4|M|API-only in the recorded comparison; embed v4 exposed dense output types rather than open sparse weights, while private deployment required licensed containers. It does not fit an offline-only evaluation.|
+
+## Verdict
+The origin-unbound report favored OpenSearch neural-sparse
+doc-v2-distill for its recorded license, size, BEIR result, and
+tokenizer-only query pattern. That preference is not a validated synthesis
+conclusion. A fresh evaluation would need to reproduce the quality result,
+measure indexing and query cost, select an inverted-postings implementation,
+and review every model license before use.

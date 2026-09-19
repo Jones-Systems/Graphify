@@ -1,0 +1,48 @@
+# SCIP toolchain pins - R2 (capsule W1-c). Hash-pinned binaries ONLY.
+#
+# NEVER install PyPI `scip`: https://pypi.org/project/scip/ is an UNRELATED
+# GPL-licensed flow-cytometry analysis library. It is not a SCIP client and
+# must never appear in any Python environment for this pipeline. There is no
+# official Python client for SCIP; tooling/scip_convert.py is pure stdlib and
+# consumes `scip print --json` output directly.
+#
+# Go `scip` CLI - github.com/scip-code/scip (successor org of sourcegraph/scip;
+# both URLs resolve to the same release assets).
+tag      = v0.9.0
+asset    = scip-linux-amd64.tar.gz            # linux x86_64
+url      = https://github.com/scip-code/scip/releases/download/v0.9.0/scip-linux-amd64.tar.gz
+sha256   = fc2e7273e110be9f35924da1066000183791e8bfdb0391355de6eaaa070fec75
+bytes    = 12307940
+sidecar  = scip-linux-amd64.tar.gz.sha256     # checksum asset on the same release
+verified = GitHub release-assets API `digest` field AND local sha256sum of the
+           downloaded artifact agree; extracted binary reports `v0.9.0`
+           (verified 2026-08-25, Debian linux x86_64).
+#
+# This file intentionally provides no executable fetch, install, extraction,
+# or launch recipe. The artifact must be supplied by the operator as immutable
+# local input and admitted only through the complete run lock in
+# docs/SCIP-PILOT.md. The release metadata above is one expected-artifact
+# identity, not a complete execution lock.
+#
+# Other platform assets on the same release (pin before first use there):
+#   darwin amd64  scip-darwin-amd64.tar.gz  39d8b16cafd6b331532d935c230c7a8f3d03d83d50fa972be3ab269f2d8267e8
+#   darwin arm64  scip-darwin-arm64.tar.gz  3078af4c0a9e809089a0bba8befc618add950cf4e429e92c78392bb5d4c99c9a
+#   linux  arm64  scip-linux-arm64.tar.gz   e97aaf597ab6a6b6fbb1bbc43993e6efb596284aaea9c3fa5b20d75186367c5e
+#
+# No companion indexer is executable from this file. The historical package
+# name/version is not an integrity pin and MUST NOT be resolved through npm,
+# npx, a remote Python bootstrap, or a JVM-downloading launcher.
+#
+# Before any pilot execution, the operator must supply an immutable run lock
+# containing the exact source commit; Graphify revision; executed
+# tooling/scip_convert.py and tooling/validate.py bytes; indexer package
+# artifact; runner; Python runtime and dependency closure; any JVM
+# distribution; this Go CLI; and the shell, sandbox launcher, and every other
+# control-plane binary, including their loader/library/plugin/helper runtime
+# closure. Each input needs the exact identity required by docs/SCIP-PILOT.md.
+# The lock must also bind a complete local non-promisor source-object closure,
+# any pre-locked fixture patch, the complete expected final fixture manifest,
+# argv, environment, and all-stage sandbox/network/mount/process/privilege and
+# finite resource-bound configuration for every descendant. Missing or
+# mismatched evidence leaves the protocol unexecutable; execution remains
+# blocked.
