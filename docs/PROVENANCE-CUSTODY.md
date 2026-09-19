@@ -96,6 +96,35 @@ effect and cannot substitute for repository delivery.
 - Independent non-bot review must bind the exact candidate revision. Preserve
   every finding and its blocking effect through remediation and renewed review.
 
+### Repair checkpoint `9a37fb7c525c900fc1affdfe76b6fbae5d735b41`
+
+The admitted first-pass review lanes reported the following dispositions:
+
+- `GSR-SEC-01` (P2): fixed. Every semantic claim-table cell and exact row shape
+  is now bound by a claim-map digest, and narrative raw references are limited
+  to the declared provenance-map section.
+- `GSR-CHK-01` (P2): fixed. Supported Python sources use their declared source
+  encoding; undecodable or NUL-bearing supported executables fail closed.
+- `GSR-CHK-02` (P2): fixed. Bounded JavaScript template interpolation is
+  evaluated, while unresolved interpolation fails closed.
+- `GSR-CHK-03` (P2): fixed. Tracked reads traverse every component relative to
+  pinned no-follow directory descriptors, and Git blob identity is calculated
+  from the bytes already read rather than reopening the path.
+- `NAR-P2-01` and `NAR-P2-02`: fixed. Deployment values and the MCP surface are
+  explicitly inherited, unvalidated proposals rather than research-authorized
+  readiness claims.
+- Raw-identifier/vocabulary P3 findings: fixed without rewriting immutable raw
+  evidence. The ranking now distinguishes the two stack-graphs repository
+  identifiers and treats L42's early policy sentence as historical wording;
+  current registered claims remain parameterized experiments.
+
+At this checkpoint, one admitted serial process passed the focused self-test,
+all declared provenance groups, Python bytecode compilation, and
+`git diff --check`. The self-test includes regressions for the unchecked table
+cell, Latin-1 Python consumer, interpolated JavaScript path, and replaced parent
+directory. These results qualify this checkpoint only; final review and merge
+use the later exact candidate revision and renewed checks.
+
 ## Stop And Recovery Boundaries
 
 Stop the affected mutation on source drift, an active or unknown writer,
