@@ -1348,6 +1348,18 @@ def decode_js_template_fragment(value: str) -> str | None:
             result.append(simple_escapes[escape])
             index += 2
             continue
+        if escape == "u" and value[index + 2:index + 3] == "{":
+            closing = value.find("}", index + 3)
+            digits = value[index + 3:closing] if closing != -1 else ""
+            if (
+                closing == -1
+                or re.fullmatch(r"[0-9a-fA-F]{1,6}", digits) is None
+                or int(digits, 16) > 0x10FFFF
+            ):
+                return None
+            result.append(chr(int(digits, 16)))
+            index = closing + 1
+            continue
         width = 4 if escape == "u" else 2 if escape == "x" else 0
         if width:
             digits = value[index + 2:index + 2 + width]
@@ -3290,6 +3302,10 @@ def self_test() -> None:
             "javascript",
             'const candidate = `research/r\\u0061w/L01-private.md`;',
         ),
+        "JavaScript braced Unicode template literal": (
+            "javascript",
+            'const candidate = `research/r\\u{61}w/L01-private.md`;',
+        ),
         "conditional base": (
             "python",
             'base = "safe"\nif flag:\n    base = "research"\n'
@@ -3608,7 +3624,7 @@ def main(argv: list[str]) -> int:
         print(
             "PASS GSR-SELF-TEST parser_cases=5 path_identity_adversarial=11 "
             "historical_tuple_adversarial=2 boundary_adversarial=10 "
-            "raw_path_adversarial=54 scip_adversarial=13"
+            "raw_path_adversarial=55 scip_adversarial=13"
         )
         return 0
 
