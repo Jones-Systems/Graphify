@@ -1315,13 +1315,16 @@ def decode_js_string(value: str) -> str | None:
         )
     if candidate[0] not in {'"', "'"}:
         return None
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", SyntaxWarning)
-            decoded = ast.literal_eval(candidate)
-    except (SyntaxError, ValueError):
-        return None
-    return decoded if isinstance(decoded, str) else None
+    quote = candidate[0]
+    index = 1
+    while index < len(candidate) - 1:
+        if candidate[index] == "\\":
+            index += 2
+            continue
+        if candidate[index] == quote:
+            return None
+        index += 1
+    return decode_js_template_fragment(candidate[1:-1])
 
 
 def decode_js_template_fragment(value: str) -> str | None:
@@ -1344,6 +1347,24 @@ def decode_js_template_fragment(value: str) -> str | None:
         if index + 1 >= len(value):
             return None
         escape = value[index + 1]
+        if escape == "\n":
+            index += 2
+            continue
+        if escape == "\r":
+            index += 3 if value[index + 2:index + 3] == "\n" else 2
+            continue
+        if escape in "01234567":
+            maximum_width = 3 if escape in "0123" else 2
+            digits = escape
+            while (
+                len(digits) < maximum_width
+                and index + 1 + len(digits) < len(value)
+                and value[index + 1 + len(digits)] in "01234567"
+            ):
+                digits += value[index + 1 + len(digits)]
+            result.append(chr(int(digits, 8)))
+            index += 1 + len(digits)
+            continue
         if escape in simple_escapes:
             result.append(simple_escapes[escape])
             index += 2
@@ -1351,13 +1372,15 @@ def decode_js_template_fragment(value: str) -> str | None:
         if escape == "u" and value[index + 2:index + 3] == "{":
             closing = value.find("}", index + 3)
             digits = value[index + 3:closing] if closing != -1 else ""
+            significant = digits.lstrip("0") or "0"
             if (
                 closing == -1
-                or re.fullmatch(r"[0-9a-fA-F]{1,6}", digits) is None
-                or int(digits, 16) > 0x10FFFF
+                or re.fullmatch(r"[0-9a-fA-F]+", digits) is None
+                or len(significant) > 6
+                or int(significant, 16) > 0x10FFFF
             ):
                 return None
-            result.append(chr(int(digits, 16)))
+            result.append(chr(int(significant, 16)))
             index = closing + 1
             continue
         width = 4 if escape == "u" else 2 if escape == "x" else 0
@@ -3306,6 +3329,22 @@ def self_test() -> None:
             "javascript",
             'const candidate = `research/r\\u{61}w/L01-private.md`;',
         ),
+        "JavaScript leading-zero code-point template literal": (
+            "javascript",
+            'const candidate = `research/r\\u{0000061}w/L01-private.md`;',
+        ),
+        "JavaScript code-point quoted literal": (
+            "javascript",
+            'const candidate = "research/r\\u{61}w/L01-private.md";',
+        ),
+        "JavaScript legacy-octal quoted literal": (
+            "javascript",
+            'const candidate = "research/r\\141w/L01-private.md";',
+        ),
+        "JavaScript continued template literal": (
+            "javascript",
+            'const candidate = `research/r\\\naw/L01-private.md`;',
+        ),
         "conditional base": (
             "python",
             'base = "safe"\nif flag:\n    base = "research"\n'
@@ -3624,7 +3663,7 @@ def main(argv: list[str]) -> int:
         print(
             "PASS GSR-SELF-TEST parser_cases=5 path_identity_adversarial=11 "
             "historical_tuple_adversarial=2 boundary_adversarial=10 "
-            "raw_path_adversarial=55 scip_adversarial=13"
+            "raw_path_adversarial=59 scip_adversarial=13"
         )
         return 0
 
