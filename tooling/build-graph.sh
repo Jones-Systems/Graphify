@@ -29,7 +29,7 @@ ROOT="$REPO${CHUNK:+/$CHUNK}"
 POLICY="${POLICY:-$GF_ROOT/$CORPUS/policy/ignore.rules}"
 RUN="$GF_ROOT/$CORPUS/runs/$(date -u +%Y%m%dT%H%M%SZ)-$(echo "${CHUNK:-full}" | tr '/' '-')"
 STAGE="$GF_ROOT/$CORPUS/staging/view"
-mkdir -p "$STAGE" "$RUN/graphify-out" "$GF_ROOT/$CORPUS/policy"
+mkdir -p "$RUN/graphify-out" "$GF_ROOT/$CORPUS/policy"
 [ -f "$POLICY" ] || printf '# corpus policy: see WORK-NOTE D6 + global denies\n' > "$POLICY"
 
 mem_guard start
@@ -38,14 +38,49 @@ python3 "$TOOL_DIR/preflight.py" "$ROOT" "$POLICY" "$RUN/preflight.json" || {
 mem_guard post-preflight
 
 # Stage included files only (preflight inventory is authoritative)
-python3 - "$RUN/preflight.json" "$ROOT" "$STAGE" <<'EOF'
-import json, os, shutil, sys
-pf, root, stage = json.load(open(sys.argv[1])), sys.argv[2], sys.argv[3]
+python3 - "$RUN/preflight.json" "$ROOT" "$STAGE" "$GF_ROOT" <<'EOF'
+import json, os, shutil, stat, sys
+pf, root, stage, owned_root = json.load(open(sys.argv[1])), *sys.argv[2:5]
 # The fixed staging path gives extractors stable IDs, but every run must still
 # be an exact materialization of the current admitted inventory.
+stage, owned_root = map(os.path.abspath, (stage, owned_root))
+source_root = os.path.realpath(root)
+if os.path.realpath(owned_root) != owned_root:
+    raise RuntimeError(f"refusing symlinked Graphify root: {owned_root}")
+if os.path.commonpath((stage, owned_root)) != owned_root or stage == owned_root:
+    raise RuntimeError(f"refusing staging target outside owned root: {stage}")
+if os.path.realpath(stage) != stage:
+    raise RuntimeError(f"refusing symlinked staging ancestry: {stage}")
+overlap = os.path.commonpath((stage, source_root))
+if overlap in {stage, source_root}:
+    raise RuntimeError(f"refusing staging/source overlap: {stage} and {source_root}")
+if os.path.basename(stage) != "view" or os.path.basename(os.path.dirname(stage)) != "staging":
+    raise RuntimeError(f"refusing unexpected staging shape: {stage}")
+staging_parent = os.path.dirname(stage)
+marker = os.path.join(staging_parent, ".graphify-view-owner")
+if os.path.lexists(staging_parent):
+    if os.path.islink(staging_parent) or not os.path.isdir(staging_parent):
+        raise RuntimeError(f"refusing unsafe staging parent: {staging_parent}")
+    try:
+        marker_fd = os.open(marker, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(marker_fd, encoding="utf-8") as handle:
+            marker_owned = (
+                stat.S_ISREG(os.fstat(handle.fileno()).st_mode)
+                and handle.read() == "graphify-staging-v1\n"
+            )
+    except OSError:
+        marker_owned = False
+    if not marker_owned:
+        raise RuntimeError(f"refusing unowned staging contents: {staging_parent}")
+else:
+    os.makedirs(staging_parent, mode=0o700)
+    with open(marker, "x", encoding="utf-8") as handle:
+        handle.write("graphify-staging-v1\n")
 if os.path.lexists(stage):
     if os.path.islink(stage) or not os.path.isdir(stage):
         raise RuntimeError(f"refusing unsafe staging target: {stage}")
+    if not shutil.rmtree.avoids_symlink_attacks:
+        raise RuntimeError("refusing staging replacement without safe rmtree support")
     shutil.rmtree(stage)
 os.makedirs(stage, mode=0o700)
 n = 0

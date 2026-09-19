@@ -76,10 +76,11 @@ def main():
             p = os.path.realpath(sf if os.path.isabs(sf) else os.path.join(root, sf))
             if not (p == root or p.startswith(root + os.sep)):
                 fatals.append(f"source-path-outside-root:{sf}")
-            elif not os.path.exists(p):
-                unresolved_int.append(sf)
-            elif p not in admitted_sources:
-                fatals.append(f"source-not-in-preflight:{sf}")
+            else:
+                if p not in admitted_sources:
+                    fatals.append(f"source-not-in-preflight:{sf}")
+                if not os.path.exists(p):
+                    unresolved_int.append(sf)
 
     # forbidden values in governed fields (ENG-C7/C9): exclusion metadata exempt
     forbidden_tokens = ("/.git/", ".env", "id_rsa", ".pem", "private_key_file", "/secrets/")
