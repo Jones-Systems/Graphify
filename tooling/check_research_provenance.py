@@ -368,6 +368,7 @@ def read_tracked_bytes(
     require(no_follow is not None,
             "tracked read rejected (no no-follow support)")
     directory_only = getattr(os, "O_DIRECTORY", 0)
+    nonblocking = getattr(os, "O_NONBLOCK", 0)
     descriptors: list[int] = []
     try:
         root_descriptor = os.open(
@@ -399,7 +400,7 @@ def read_tracked_bytes(
         try:
             descriptor = os.open(
                 parts[-1],
-                os.O_RDONLY | os.O_CLOEXEC | no_follow,
+                os.O_RDONLY | os.O_CLOEXEC | no_follow | nonblocking,
                 dir_fd=current_descriptor,
             )
         except OSError as error:
@@ -1307,7 +1308,11 @@ def decode_js_string(value: str) -> str | None:
     if len(candidate) < 2 or candidate[0] != candidate[-1]:
         return None
     if candidate[0] == "`":
-        return None if "${" in candidate else candidate[1:-1]
+        return (
+            None
+            if "${" in candidate
+            else decode_js_template_fragment(candidate[1:-1])
+        )
     if candidate[0] not in {'"', "'"}:
         return None
     try:
@@ -1317,6 +1322,43 @@ def decode_js_string(value: str) -> str | None:
     except (SyntaxError, ValueError):
         return None
     return decoded if isinstance(decoded, str) else None
+
+
+def decode_js_template_fragment(value: str) -> str | None:
+    result: list[str] = []
+    index = 0
+    simple_escapes = {
+        "b": "\b",
+        "f": "\f",
+        "n": "\n",
+        "r": "\r",
+        "t": "\t",
+        "v": "\v",
+        "0": "\0",
+    }
+    while index < len(value):
+        if value[index] != "\\":
+            result.append(value[index])
+            index += 1
+            continue
+        if index + 1 >= len(value):
+            return None
+        escape = value[index + 1]
+        if escape in simple_escapes:
+            result.append(simple_escapes[escape])
+            index += 2
+            continue
+        width = 4 if escape == "u" else 2 if escape == "x" else 0
+        if width:
+            digits = value[index + 2:index + 2 + width]
+            if len(digits) != width or re.fullmatch(r"[0-9a-fA-F]+", digits) is None:
+                return None
+            result.append(chr(int(digits, 16)))
+            index += 2 + width
+            continue
+        result.append(escape)
+        index += 2
+    return "".join(result)
 
 
 def split_js_template(value: str) -> list[tuple[bool, str]] | None:
@@ -1333,15 +1375,37 @@ def split_js_template(value: str) -> list[tuple[bool, str]] | None:
         if not body.startswith("${", index):
             index += 1
             continue
-        parts.append((False, body[literal_start:index]))
+        literal = decode_js_template_fragment(body[literal_start:index])
+        parts.append((False, literal if literal is not None else UNKNOWN_PATH_COMPONENT))
         expression_start = index + 2
-        expression_end = body.find("}", expression_start)
-        if expression_end == -1 or "{" in body[expression_start:expression_end]:
-            return [(True, UNKNOWN_PATH_COMPONENT)]
-        parts.append((True, body[expression_start:expression_end]))
-        index = expression_end + 1
+        expression_end = expression_start
+        depth = 1
+        quote: str | None = None
+        escaped = False
+        while expression_end < len(body) and depth:
+            character = body[expression_end]
+            if quote is not None:
+                if escaped:
+                    escaped = False
+                elif character == "\\":
+                    escaped = True
+                elif character == quote:
+                    quote = None
+            elif character in {'"', "'", "`"}:
+                quote = character
+            elif character == "{":
+                depth += 1
+            elif character == "}":
+                depth -= 1
+            expression_end += 1
+        if depth:
+            parts.append((True, UNKNOWN_PATH_COMPONENT))
+            return parts
+        parts.append((True, body[expression_start:expression_end - 1]))
+        index = expression_end
         literal_start = index
-    parts.append((False, body[literal_start:]))
+    literal = decode_js_template_fragment(body[literal_start:])
+    parts.append((False, literal if literal is not None else UNKNOWN_PATH_COMPONENT))
     return parts
 
 
@@ -1379,7 +1443,15 @@ class JavaScriptRawPathAnalyzer:
                     groups.append({part})
                     continue
                 evaluated = self._evaluate(part)
-                groups.append(evaluated or {UNKNOWN_PATH_COMPONENT})
+                if not evaluated:
+                    evaluated = {UNKNOWN_PATH_COMPONENT}
+                    for match in re.finditer(
+                        r'''(?s)(["'])(.*?)(?<!\\)\1''', part
+                    ):
+                        decoded_literal = decode_js_string(match.group(0))
+                        if decoded_literal is not None:
+                            evaluated.add(decoded_literal)
+                groups.append(evaluated)
             return join_candidate_groups(groups, "")
         if re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$]*", value):
             return set(self.environment.get(value, set()))
@@ -1879,6 +1951,14 @@ def validate_positive_section_structure(
 ) -> None:
     section: str | None = None
     seen_sections: set[str] = set()
+    header_counts: Counter[str] = Counter()
+    table_counts: Counter[str] = Counter()
+    expected_headers = {
+        "research/RANKING.md": [
+            "Order", "Candidate experiment", "Validated support", "Required gate"
+        ],
+    }
+    default_header = ["Supported statement", "Inputs", "Boundary"]
     for line_number, line in enumerate(text.splitlines(), start=1):
         heading = re.match(r"^## (.+)$", line)
         if heading:
@@ -1892,14 +1972,26 @@ def validate_positive_section_structure(
             continue
         require(line.startswith("|"),
                 f"{relative}:{line_number} ungoverned positive-section prose")
+        table_counts[section] += 1
         cells = markdown_cells(line)
-        if is_separator_row(cells) or cells[0] in {"Order", "Supported statement"}:
+        if is_separator_row(cells):
+            continue
+        expected_header = expected_headers.get(relative, default_header)
+        if cells == expected_header:
+            header_counts[section] += 1
             continue
         require(MARKER_RE.search(line) is not None,
                 f"{relative}:{line_number} positive row lacks a claim marker")
     require(seen_sections == sections,
             f"{relative} positive sections differ: "
             f"missing={sorted(sections - seen_sections)}")
+    require(
+        all(
+            header_counts[section] == (1 if table_counts[section] else 0)
+            for section in sections
+        ),
+        f"{relative} tabular positive sections require one exact table header",
+    )
 
 
 def validate_governed_conclusion(
@@ -2793,6 +2885,7 @@ def self_test() -> None:
             b'# coding: latin-1\nnote = "caf\xe9"\n'
             b'raw = "research/raw/L01-private.md"\n'
         )
+        os.mkfifo(test_root / "blocking.fifo")
         outside = container / "outside.md"
         outside.write_text("CONTENT-MUST-NOT-ENTER-DIAGNOSTICS", encoding="utf-8")
         (test_root / "link.md").symlink_to("positive.md")
@@ -2804,6 +2897,7 @@ def self_test() -> None:
             "escape.md",
             "nested/positive.md",
             "latin.py",
+            "blocking.fifo",
         }
         require(
             read_tracked_text(
@@ -2867,6 +2961,12 @@ def self_test() -> None:
                 "nested/positive.md", root=test_root, tracked=tracked_paths
             ),
             "replaced parent directory",
+        )
+        expect_failure(
+            lambda: read_tracked_bytes(
+                "blocking.fifo", root=test_root, tracked=tracked_paths
+            ),
+            "nonblocking FIFO leaf",
         )
 
     ranking_for_tuple_test = read_tracked_text("research/RANKING.md")
@@ -3022,6 +3122,37 @@ def self_test() -> None:
         ),
         "unmarked positive-section prose",
     )
+    ranking_table = (
+        "## Evidence-bound experiment order\n\n"
+        "| Order | Candidate experiment | Validated support | Required gate |\n"
+        "| ---: | --- | --- | --- |\n"
+        "| 1 | <!-- positive-claim: EXP-01 --> Statement. | L20 | Gate. |\n"
+    )
+    validate_positive_section_structure(
+        "research/RANKING.md",
+        ranking_table,
+        {"Evidence-bound experiment order"},
+        {},
+    )
+    expect_failure(
+        lambda: validate_positive_section_structure(
+            "research/RANKING.md",
+            ranking_table
+            + "| Order | Adopt GraphRAG for production. | L01 | None. |\n",
+            {"Evidence-bound experiment order"},
+            {},
+        ),
+        "extra header-shaped positive row",
+    )
+    expect_failure(
+        lambda: validate_positive_section_structure(
+            "research/RANKING.md",
+            ranking_table.replace("Required gate", "Deployment authority"),
+            {"Evidence-bound experiment order"},
+            {},
+        ),
+        "altered positive table header",
+    )
     expect_failure(
         lambda: parse_negative_boundary_blocks(
             "research/synthesis/test.md",
@@ -3150,6 +3281,15 @@ def self_test() -> None:
             'const base = "research"; const dir = "raw"; '
             'const candidate = `${base}/${dir}/L01-private.md`;',
         ),
+        "JavaScript escaped template interpolation": (
+            "javascript",
+            'const base = "research"; '
+            'const candidate = `${base}/r\\u0061w/L01-private.md`;',
+        ),
+        "JavaScript escaped template literal": (
+            "javascript",
+            'const candidate = `research/r\\u0061w/L01-private.md`;',
+        ),
         "conditional base": (
             "python",
             'base = "safe"\nif flag:\n    base = "research"\n'
@@ -3224,6 +3364,12 @@ def self_test() -> None:
             "javascript",
             'const base = choose("research"); const dir = "raw"; '
             'const candidate = `${base}/${dir}/L01-private.md`;',
+        ),
+        "nested dynamic JavaScript template": (
+            "javascript",
+            'const base = "research"; const dir = "raw"; '
+            'const candidate = `${base}/${dir}/${({name:'
+            '"L01-private.md"}).name}`;',
         ),
     }
     for label, (file_type, value) in raw_dynamic_probes.items():
@@ -3460,9 +3606,9 @@ def main(argv: list[str]) -> int:
             print(f"FAIL GSR-SELF-TEST {error}", file=sys.stderr)
             return 1
         print(
-            "PASS GSR-SELF-TEST parser_cases=5 path_identity_adversarial=10 "
-            "historical_tuple_adversarial=2 boundary_adversarial=8 "
-            "raw_path_adversarial=51 scip_adversarial=13"
+            "PASS GSR-SELF-TEST parser_cases=5 path_identity_adversarial=11 "
+            "historical_tuple_adversarial=2 boundary_adversarial=10 "
+            "raw_path_adversarial=54 scip_adversarial=13"
         )
         return 0
 
