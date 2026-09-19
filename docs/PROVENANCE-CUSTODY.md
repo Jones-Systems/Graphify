@@ -169,6 +169,20 @@ passed with 62 raw-path adversarial cases and a cleanup-owned stale-stage
 fixture. Exact-candidate full checks and renewed independent review remain
 required.
 
+Renewed review closed those three findings and opened two repair-specific P2
+findings. `GSR-FCR-04` showed that a missing non-inventory graph source could
+be downgraded to a warning; `GSR-SEC-FINAL-04` showed that recursive staging
+replacement did not contain symlinked ancestors or preserve unknown existing
+material. Checkpoint `64ad220805a33499054d726e40edd85a6e2a9003`
+makes inventory membership fatal independently of file existence. Staging
+replacement now requires an exact non-symlink path beneath the owned root,
+rejects source overlap and unexpected path shape, requires a no-follow regular
+ownership marker, preserves unowned contents, and requires the platform's
+symlink-safe recursive deletion implementation. Cleanup-owned focused fixtures
+passed for normal replacement, unowned preservation, symlink-escape rejection,
+and both present and missing non-inventory sources. Exact-candidate full checks
+and renewed independent review remain required.
+
 ## Stop And Recovery Boundaries
 
 Stop the affected mutation on source drift, an active or unknown writer,
