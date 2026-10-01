@@ -11,7 +11,19 @@ validates, and governs graph builds; none of the heavy artifacts themselves.
 | `tooling/` | install / toggle / preflight / validate / build / promote scripts + corpus manifest (migrated from Codex-V3 @ `fc1172d`) |
 | `policies/<corpus>/ignore.rules` | versioned per-corpus deny-first policies (the authoritative copies; runtime reads from `~/.agent-references/graphify/<corpus>/policy/`) |
 | `docs/RUNBOOK.md` | operational procedures: install, build waves, promotion gate, toggle cycle |
+| `tooling/graph_read.py`, `tooling/graph_pull.py` | stateless snapshot queries and create-only selected-store copies |
+| `.agents/skills/graphify-query/SKILL.md` | canonical consumer instructions for portable snapshot access |
 | `research/` | research program: raw lane findings, group syntheses, master ranking, implementation plans |
+
+## Portable agent access
+
+The catalog CLI reads selected checksum-verified graph archives without a
+provider session or MCP server. Bind the reader release and an approved catalog
+in each consumer workflow; use [the graph query skill](.agents/skills/graphify-query/SKILL.md)
+for commands and interpretation. [The access contract](docs/AGENT-ACCESS.md)
+defines bounded responses, freshness, portable copy behavior, and host custody.
+Populated stores remain outside source Git. Existing promoted-corpus runtime
+paths below are a separate interface and do not locate portable catalogs.
 
 ## Runtime layout (outside Git)
 
