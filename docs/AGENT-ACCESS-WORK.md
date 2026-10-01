@@ -115,6 +115,10 @@ public graph store, repository visibility, or sudo effect has occurred.
 
 ## Integration Handoff
 
+M Jones confirmed that `Jones-Systems/host-tooling` is the intended VPS/test-server
+distribution repository. This confirms the integration destination; it does not
+by itself authorize shared host activation or broaden the existing host scope.
+
 Graphify owns `tooling/graph_read.py`, `tooling/graph_pull.py`, and its canonical
 `.agents/skills/graphify-query/SKILL.md`. V3 adds only a trigger row and consumer
 skill pointing to the bound Graphify release. These are isolated source changes,
