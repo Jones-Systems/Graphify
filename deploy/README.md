@@ -80,7 +80,7 @@ target-host validation; they are not selected by the repaired research record.
 
 | Threshold               | Value                        | Enforced by                     |
 |-------------------------|------------------------------|---------------------------------|
-| Agent interactive floor | `MemAvailable >= 3072 MiB`   | `install.sh` / `preflight.py`   |
+| Sampled available-memory floor | `MemAvailable >= 3072 MiB` | `tooling/install.sh` at entry / `tooling/build-graph.sh` at stage boundaries |
 | Batch entry gate        | `MemAvailable >= 10240 MiB`  | `gate-memavailable` (exit 75)   |
 | Batch reclaim throttle  | `MemoryHigh=8G`              | slice                           |
 | Batch hard wall         | `MemoryMax=12G`              | slice (cgroup-local OOM)        |
