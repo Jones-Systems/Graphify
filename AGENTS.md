@@ -12,6 +12,13 @@ Preserve unrelated changes and keep runtime artifacts out of Git staging.
 
 ## Load the relevant guidance
 
+Graphify owns portable query/copy tools and their canonical consumer skill.
+Global agent instructions provide discovery from any repository; Codex V3 is
+an ordinary consumer. For cross-file graph navigation, read
+[the query skill](.agents/skills/graphify-query/SKILL.md), then confirm pointers
+in current source. The host-local binding and thin global route are defined by
+[the access contract](docs/AGENT-ACCESS.md#global-discovery).
+
 - For installation, policy deployment, builds, promotion, or toggles, read
   [the runbook](docs/RUNBOOK.md).
 - For research claims, read [the ranking contract](research/RANKING.md) and

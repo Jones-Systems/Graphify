@@ -36,11 +36,26 @@ source; they do not install dependencies, read corpora, or start a build.
 | --- | --- |
 | Install, build, refresh, promote, or toggle integration | [Operational runbook](docs/RUNBOOK.md), with command syntax and acceptance requirements |
 | Inspect orchestration and extraction source | [Tooling](tooling/) |
+| Query or copy selected portable snapshots | [Canonical query skill](.agents/skills/graphify-query/SKILL.md), backed by `tooling/graph_read.py` and `tooling/graph_pull.py` |
 | Review versioned corpus exclusions | [Corpus policies](policies/) |
 | Understand research eligibility | [Research ranking and provenance](research/RANKING.md) and [positive-claim registry](research/positive-claims.json) |
 | Inspect batch scheduling examples | [Deployment documentation](deploy/README.md), inherited and unvalidated |
 | Understand the proposed agent query interface | [MCP surface proposal](docs/MCP-SURFACE.md), with registration gated by DEC-9 |
 | Understand the symbol-edge experiment | [SCIP pilot protocol](docs/SCIP-PILOT.md), unexecutable until its complete operator-supplied run lock is independently verified |
+
+## Portable agent access
+
+The catalog CLI reads selected checksum-verified graph archives without a
+provider session or MCP server. Global agent instructions route directly to
+Graphify; Codex V3 is an ordinary consumer. Graphify owns the host binding,
+[canonical query skill](.agents/skills/graphify-query/SKILL.md), and the
+[access contract](docs/AGENT-ACCESS.md), including commands, freshness, and
+create-only snapshot copies. Host-tooling distributes pinned source and
+selected data. Populated stores remain outside source Git; the legacy promoted
+corpus interface does not locate portable catalogs.
+
+The [agent usage profile](docs/AGENT-USAGE-PROFILE.md) records request and role
+fit from 16 repository trials, query costs, and source-verification limits.
 
 ## Operational limits
 
