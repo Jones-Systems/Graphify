@@ -77,9 +77,33 @@ exclusions, incomplete coverage, and unresolved references as limitations.
 
 Graphify provides the discoverable skill under `.agents/skills/graphify-query`.
 Consumers bind `GRAPHIFY_READER` to this release's reader and
-`GRAPHIFY_CATALOG` to an approved portable store. A short consumer AGENTS.md
-pointer routes to the skill; it does not copy the implementation or force a
-query before every source read. No machine-wide registration occurs here.
+`GRAPHIFY_CATALOG` to an approved portable store. The global agent instructions route directly to this canonical skill;
+Codex V3 is an ordinary consumer and owns no duplicate query skill or required
+router. The route does not force a query before every source read.
+
+### Global discovery
+
+Graphify owns the tools, commands, query semantics, skill, and binding contract.
+Provider-global instructions contain only the concise route maintained in
+[GLOBAL-AGENT-ROUTE.md](GLOBAL-AGENT-ROUTE.md). Render its absolute skill path
+for the host; keep the route outside unrelated managed instruction blocks.
+Where a provider supports global skills, link to the Graphify-owned skill
+rather than copying it. Existing provider-global files may carry the same route;
+creating unrelated provider configuration is not required.
+
+The host-local `~/.local/share/graphify/agent-access.json` uses schema
+`graphify-agent-access-binding/v1`, with absolute `reader`, `skill`, and `catalog`
+paths, exact `source_revision`, `catalog_sha256`, and `source_status` (`local-candidate`
+or `released`). Task-supplied bindings take precedence. The canonical skill owns
+binding validation and unavailable/stale behavior. The file is host state outside
+source Git; never place private catalogs or graph archives in the source release.
+Changing a host binding requires the owner-authorized target and writer scope.
+
+Host-tooling distributes exact Graphify source plus canonical skill and selected
+data, and renders host paths into this route/binding. It owns distribution, not
+the Graphify commands or instructions. Source and graph parity remain separate
+checks. A local global route does not establish remote distribution, automatic
+refresh, or shared-server activation.
 
 ## Compatibility And Ownership
 
@@ -102,8 +126,8 @@ and no query-side writes. Pull fixtures prove portable identity, create-only
 destination behavior, corrupt-source rejection, cancellation/failure cleanup,
 and independent concurrent destinations. Fixtures own temporary lifetimes.
 
-Run the reader and pull test modules as the affected union. Run meaningful V3
-guidance checks for the consumer pointer. Qualify one real query process at a
+Run the reader and pull test modules as the affected union. Validate the canonical skill, global route resolution, host binding identity,
+and discovery from a checkout outside Graphify. Qualify one real query process at a
 time with measured latency, peak RSS, and response bytes. Fresh agents then try
 Codex V3 affected-check navigation, T3 provider-session ownership, and Jones Code
 message/provider routing. They must discover instructions, select a snapshot,

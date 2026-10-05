@@ -11,12 +11,26 @@ inspection. Graphs suggest where to look; current source establishes facts.
 
 ## Binding and discovery
 
-`GRAPHIFY_READER` identifies this release's absolute `tooling/graph_read.py`
-path; `GRAPHIFY_CATALOG` identifies the approved store's `download-catalog.json`.
-The catalog's sibling `archives/` directory holds its selected snapshots.
-Bind these explicitly in the task or workflow. If absent, report unavailable
-graph access and continue with direct source search. Do not guess legacy
-`current` paths, install packages, or rebuild graphs to answer a query.
+`GRAPHIFY_READER` identifies the bound Graphify source's absolute
+`tooling/graph_read.py` path; `GRAPHIFY_CATALOG` identifies the approved store's
+`download-catalog.json`. The catalog's sibling `archives/` holds its snapshots.
+Explicit task or workflow bindings take precedence.
+
+For a thread started in any repository without explicit bindings, read the
+host-local Graphify binding at `~/.local/share/graphify/agent-access.json`.
+Its `graphify-agent-access-binding/v1` record supplies `reader`, `skill`,
+`catalog`, `source_revision`, `catalog_sha256`, and `source_status`. Resolve
+absolute paths, confirm this skill and reader belong to that Graphify checkout,
+and verify its Git HEAD equals `source_revision` with no tracked changes.
+A `local-candidate` is tested local source, not a published or installed release.
+Use the record's reader/catalog paths as the CLI arguments below and pass
+`--catalog-sha256` with its bound digest. Do not execute JSON values as shell
+code, search unrelated private stores, or silently replace a mismatched binding.
+
+If no usable binding exists, report unavailable graph access and use direct
+source search. Do not guess legacy `current` paths, install packages, or rebuild
+graphs to answer a query. Read [the global routing contract](../../../docs/AGENT-ACCESS.md#global-discovery)
+when maintaining host discovery or provider-global pointers.
 
 ```bash
 python3 -B "$GRAPHIFY_READER" --catalog "$GRAPHIFY_CATALOG" list

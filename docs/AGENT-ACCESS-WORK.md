@@ -146,3 +146,37 @@ activation have not been performed. The next integration effect is a bounded
 host-tooling custody/import extension and exact consumer binding, followed by
 separately scoped transport and host activation. The CLI is not an automatic
 source-refresh or fleet-sync service.
+
+## Global Discovery Correction — Owner Direction
+
+M Jones directed Graphify to own every tool and invocation instruction, with
+thin discovery in global AGENTS.md and existing provider equivalents, instead
+of a Codex-V3-local consumer layer. The owner requested frontier judgment;
+Astra/medium independently inspected the focused ownership and global-source
+boundary and recommended the direct route plus Graphify-owned local binding.
+The earlier V3-pointer checkpoint and integration wording above are superseded
+for consumer discovery; historical trial evidence remains unchanged.
+
+Root remains sole Git owner of both declared worktrees. The correction updates
+Graphify's canonical skill, access spec, README, and global-route template, and
+withdraws only the previously authored unshipped V3 route/skill. No executable
+reader/copy code changes. A host-local binding identifies the tested candidate
+and approved catalog; a Codex global skill symlink points to Graphify's actual
+skill. The global paragraph is outside the existing codex-agent-core managed
+block, which remains byte-identical. Owner direction covers these exact local
+global discovery changes; no sudo or remote activation is included.
+
+The local binding uses the original 52-graph catalog. Candidate status is
+explicit and does not assert release, merge, server sync, or automatic refresh.
+Other standard provider-global instruction files were absent in the focused
+inspection; none is invented. The Graphify-owned route template supports later
+rendering into existing provider instruction files through their authorized
+host route. Host-tooling remains the distribution owner, without tool/guidance
+custody. Live distribution remains unfinished.
+
+Affected verification: canonical skill frontmatter, route/link resolution,
+binding source/catalog identity, managed-block preservation, withdrawal of the
+V3 pointer, and a read-only catalog invocation from outside Graphify. The prior
+21 executable CLI checks remain applicable; no new code test is needed for this
+instruction-only correction. Exact checkpoint and verification outcomes are
+recorded in the task-owned global-routing evidence.

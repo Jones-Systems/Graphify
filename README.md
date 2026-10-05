@@ -18,10 +18,12 @@ validates, and governs graph builds; none of the heavy artifacts themselves.
 ## Portable agent access
 
 The catalog CLI reads selected checksum-verified graph archives without a
-provider session or MCP server. Bind the reader release and an approved catalog
-in each consumer workflow; use [the graph query skill](.agents/skills/graphify-query/SKILL.md)
+provider session or MCP server. Global agent instructions route directly to
+Graphify; Codex V3 is an ordinary consumer. The Graphify-owned host binding makes
+the reader and approved catalog discoverable from any repository; use [the graph query skill](.agents/skills/graphify-query/SKILL.md)
 for commands and interpretation. [The access contract](docs/AGENT-ACCESS.md)
-defines bounded responses, freshness, portable copy behavior, and host custody.
+defines global discovery, bounded responses, freshness, portable copy behavior,
+and host custody.
 Populated stores remain outside source Git. Existing promoted-corpus runtime
 paths below are a separate interface and do not locate portable catalogs.
 
