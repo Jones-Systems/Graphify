@@ -9,6 +9,12 @@ Use the CLI for questions spanning files or relationships. Known paths, exact
 strings, simple edits, and runtime observations usually need direct source
 inspection. Graphs suggest where to look; current source establishes facts.
 
+See the [tested usage profile](../../../docs/AGENT-USAGE-PROFILE.md) for request
+and role fit. Start with one distinctive query; use at most one focused follow-up
+per repository when it resolves a useful lead. Prefer source fallback for noisy,
+empty, stale, truncated, or expensive results. Prior messages require native
+thread/history tools; live-state questions require authorized runtime observation.
+
 ## Binding and discovery
 
 `GRAPHIFY_READER` identifies the bound Graphify source's absolute

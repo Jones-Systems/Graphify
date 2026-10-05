@@ -81,6 +81,10 @@ Consumers bind `GRAPHIFY_READER` to this release's reader and
 Codex V3 is an ordinary consumer and owns no duplicate query skill or required
 router. The route does not force a query before every source read.
 
+The [agent usage profile](AGENT-USAGE-PROFILE.md) qualifies request/role fit and
+records broader frontend, backend, governance, cross-repository, and history
+controls. It supplies selective routing defaults, not productivity guarantees.
+
 ### Global discovery
 
 Graphify owns the tools, commands, query semantics, skill, and binding contract.

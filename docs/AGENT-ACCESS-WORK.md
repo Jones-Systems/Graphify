@@ -23,6 +23,12 @@ The CLI builder owns only new reader/pull scripts and their two tests. It may
 not mutate Git, existing producer tooling, dependencies, or host configuration.
 Query workers receive read-only graph/source scopes and task-owned result paths.
 
+## Historical checkpoints
+
+The following original research, verification, and integration sections record
+earlier checkpoints. Later correction and qualification sections supersede
+consumer routing and PR-state assertions; native GitHub owns current PR state.
+
 ## Research And Decisions
 
 The completed private rollout has fifty-two selected archives and three empty
@@ -180,3 +186,29 @@ V3 pointer, and a read-only catalog invocation from outside Graphify. The prior
 21 executable CLI checks remain applicable; no new code test is needed for this
 instruction-only correction. Exact checkpoint and verification outcomes are
 recorded in the task-owned global-routing evidence.
+
+## Broader Request Qualification And Source Delivery
+
+The owner requested Frontier mode, actual role/request trials, and merge of
+scoped PRs. Astra supplied trial framing and final evidence synthesis; root
+executed serial queries, persisted metrics, and owns source encoding/Git.
+The [usage profile](AGENT-USAGE-PROFILE.md) records all 16 repository cases plus
+the native-history control: two useful, seven partial, three unhelpful, and four
+correct graph skips. All 22 executed queries exited zero without timeout or
+stderr; one additional attempt was refused before execution by CPU admission.
+The 21 CLI tests passed on clean revision `7f0a46b4b6c2663ad515c5f187dd5fbb45c3a6d4`.
+No graph regeneration or remote host mutation was performed.
+
+The profile and canonical skill now route selective queries, source fallback,
+live observations, and prior-message retrieval. Private evidence remains in
+the existing task-owned evidence root. Source-first timings were incomplete;
+no comparative productivity claim is made. The UI isolation incident and its
+fresh verification recovery are recorded in the profile.
+
+Graphify canonical main `96dd0dc` was merged normally into the candidate,
+preserving its newer operating guidance. Codex-V3 PR #395 was synchronized with
+its current main; head `1e5079f11fc6b62e2a7478b4f847b082d2d8585e` is the
+source-delivery candidate after closure repair and main integration. Its older
+failed-CI/unpublished-fix statements above are historical. Direct GitHub
+postconditions and merge receipts remain authoritative in task evidence.
+Source delivery does not activate hosts or implement host-tooling distribution.

@@ -54,6 +54,9 @@ create-only snapshot copies. Host-tooling distributes pinned source and
 selected data. Populated stores remain outside source Git; the legacy promoted
 corpus interface does not locate portable catalogs.
 
+The [agent usage profile](docs/AGENT-USAGE-PROFILE.md) records request and role
+fit from 16 repository trials, query costs, and source-verification limits.
+
 ## Operational limits
 
 The installer pins and hash-checks the `graphifyy==0.9.16` wheel, but its
