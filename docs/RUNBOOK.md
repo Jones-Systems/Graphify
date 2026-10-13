@@ -162,6 +162,14 @@ python3 -B tooling/graph_freshness.py --catalog /STORE/download-catalog.json \
 ```
 
 Optionally add `--target-oid FULL_OID` for a caller-supplied target comparison.
+The observer rejects any effective `filter.*` configuration and indexed
+submodules before status, returning unavailable source observation without
+executing filters or entering submodules. It checks names across Git config
+scopes and includes; unused or empty filter definitions are rejected too.
+Keep Git configuration unchanged during the observation: sampling does not
+isolate concurrent reconfiguration. Do not disable filters to force a clean
+qualification; that would change the checkout comparison's semantics.
+
 The observer validates through the delivered reader and samples Git before and
 after validation with optional locks disabled. Exit `0` means only a stable
 sampled clean-checkout head match (and matching target if supplied); exit `2`

@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import shlex
 import subprocess
 import sys
 import tarfile
@@ -110,6 +111,193 @@ class FreshnessTests(unittest.TestCase):
             self.assertEqual(result['observation']['stability'], 'stable_samples')
             self.assertLessEqual(result['observation']['started_at_utc'], result['observation']['finished_at_utc'])
             self.assertEqual(snapshot(root), before)
+
+    def test_clean_filter_never_executes(self):
+        with fixture() as (root, source, head, path, sha):
+            marker = root / 'filter-executed'
+            script = root / 'filter.py'
+            script.write_text(
+                'import pathlib, sys\n'
+                'pathlib.Path(sys.argv[1]).write_text("executed")\n'
+                'sys.stdout.buffer.write(sys.stdin.buffer.read())\n')
+            command = ' '.join(shlex.quote(str(arg)) for arg in
+                               (sys.executable, '-B', script, marker))
+            git(source, 'config', 'filter.fixture.clean', command)
+            (source / '.git' / 'info' / 'attributes').write_text('file filter=fixture\n')
+            (source / 'file').write_text('two\n')
+            os.utime(source / 'file', (1, 1))
+            before = snapshot(root)
+            result = self.observe(path, sha, source)
+            self.assertEqual(
+                (marker.exists(), result['status'], result['comparison']['outcome'],
+                 result['comparison']['qualified']),
+                (False, 'error', 'observation_error', False))
+            self.assertEqual(snapshot(root), before)
+
+    def test_process_filters_in_effective_config_never_execute(self):
+        scopes = ('local', 'global', 'xdg', 'include', 'gitdir', 'onbranch',
+                  'worktree', 'linked_worktree', 'system')
+        for scope in scopes:
+            with self.subTest(scope=scope), fixture() as (root, source, head, path, sha):
+                if scope == 'linked_worktree':
+                    linked = root / 'linked'
+                    git(source, 'worktree', 'add', '-qb', 'linked-fixture', str(linked), head)
+                    source = linked
+                git_dir = Path(git(source, 'rev-parse', '--absolute-git-dir'))
+                marker = root / 'process-executed'
+                script = root / 'process.py'
+                # Execution is the violation; no protocol server or lasting child
+                # is needed to detect it. An accidental launch exits immediately.
+                script.write_text('import pathlib, sys\n'
+                                  'pathlib.Path(sys.argv[1]).write_text("executed")\n')
+                command = ' '.join(shlex.quote(str(arg)) for arg in
+                                   (sys.executable, '-B', script, marker))
+                config = root / 'filter-config'
+                if scope == 'local':
+                    config = source / '.git' / 'config'
+                elif scope == 'global':
+                    config = root / '.gitconfig'
+                elif scope == 'xdg':
+                    config = root / 'xdg' / 'git' / 'config'
+                    config.parent.mkdir(parents=True)
+                elif scope in ('worktree', 'linked_worktree'):
+                    git(source, 'config', 'extensions.worktreeConfig', 'true')
+                    config = git_dir / 'config.worktree'
+                elif scope in ('include', 'gitdir', 'onbranch'):
+                    key = 'include.path'
+                    if scope == 'gitdir':
+                        key = f'includeIf.gitdir:{source}/.git.path'
+                    elif scope == 'onbranch':
+                        branch = git(source, 'branch', '--show-current')
+                        key = f'includeIf.onbranch:{branch}.path'
+                    git(source, 'config', key, str(config))
+                git(source, 'config', '--file', str(config), 'filter.fixture.process', command)
+                info = git_dir / 'info'
+                info.mkdir(exist_ok=True)
+                (info / 'attributes').write_text('file filter=fixture\n')
+                (source / 'file').write_text('two\n')
+                os.utime(source / 'file', (1, 1))
+                original = subprocess.Popen
+                def isolated_config(*args, **kwargs):
+                    env = dict(kwargs['env'])
+                    env.update(GIT_CONFIG_SYSTEM=str(config) if scope == 'system' else os.devnull)
+                    kwargs['env'] = env
+                    return original(*args, **kwargs)
+                before = snapshot(root)
+                with patch.dict(os.environ, {'HOME': str(root), 'XDG_CONFIG_HOME': str(root / 'xdg')}), \
+                        patch.object(freshness.subprocess, 'Popen', side_effect=isolated_config) as launch:
+                    result = self.observe(path, sha, source)
+                self.assertFalse(marker.exists())
+                self.assertEqual(result['status'], 'error')
+                self.assertEqual(result['comparison']['outcome'], 'observation_error')
+                self.assertIn('filter configuration', result['error']['message'])
+                self.assertFalse(result['comparison']['qualified'])
+                self.assertFalse(any('status' in call.args[0] for call in launch.call_args_list))
+                self.assertEqual(snapshot(root), before)
+
+    def test_unused_or_empty_filter_definitions_are_unavailable(self):
+        for name, value in (('clean', ''), ('process', ''), ('smudge', 'unused'), ('required', 'false')):
+            with self.subTest(name=name), fixture() as (root, source, head, path, sha):
+                git(source, 'config', 'filter.Unused.' + name, value)
+                result = self.observe(path, sha, source)
+                self.assertEqual(result['comparison']['outcome'], 'observation_error')
+                self.assertFalse(result['comparison']['qualified'])
+                self.assertIsNone(result['source']['before'])
+
+    def test_attributes_without_driver_keep_git_cleanliness_semantics(self):
+        for location in ('info', 'worktree', 'index', 'global'):
+            with self.subTest(location=location), fixture() as (root, source, head, path, sha):
+                if location == 'info':
+                    attributes = source / '.git' / 'info' / 'attributes'
+                elif location == 'global':
+                    attributes = root / 'attributes'
+                    git(source, 'config', 'core.attributesFile', str(attributes))
+                else:
+                    attributes = source / '.gitattributes'
+                attributes.write_text('file filter=undefined\n')
+                if location in ('worktree', 'index'):
+                    git(source, 'add', '.gitattributes')
+                    git(source, 'commit', '-qm', 'attributes')
+                    head = git(source, 'rev-parse', 'HEAD')
+                    path, sha = write_store(root, head)
+                    if location == 'index':
+                        attributes.unlink()
+                os.utime(source / 'file', (1, 1))
+                result = self.observe(path, sha, source)
+                expected = 'dirty_source' if location == 'index' else 'clean_head_match'
+                self.assertEqual(result['comparison']['outcome'], expected)
+                (source / 'file').write_text('two\n')
+                os.utime(source / 'file', (1, 1))
+                self.assertEqual(self.observe(path, sha, source)['comparison']['outcome'], 'dirty_source')
+
+    def test_indexed_submodules_unavailable_without_entering_them(self):
+        for initialized in (False, True):
+            with self.subTest(initialized=initialized), fixture() as (root, source, head, path, sha):
+                marker = root / 'submodule-filter-executed'
+                module = source / 'module'
+                module.mkdir()
+                if initialized:
+                    git(module, 'init', '-q')
+                    (module / 'file').write_text('one\n')
+                    git(module, 'add', 'file')
+                    git(module, 'commit', '-qm', 'module')
+                    module_head = git(module, 'rev-parse', 'HEAD')
+                    script = root / 'module-filter.py'
+                    script.write_text('import pathlib, sys\n'
+                                      'pathlib.Path(sys.argv[1]).write_text("executed")\n'
+                                      'sys.stdout.buffer.write(sys.stdin.buffer.read())\n')
+                    command = ' '.join(shlex.quote(str(arg)) for arg in
+                                       (sys.executable, '-B', script, marker))
+                    git(module, 'config', 'filter.fixture.clean', command)
+                    (module / '.git' / 'info' / 'attributes').write_text('file filter=fixture\n')
+                    (module / 'file').write_text('two\n')
+                    os.utime(module / 'file', (1, 1))
+                else:
+                    module_head = head
+                git(source, 'update-index', '--add', '--cacheinfo', f'160000,{module_head},module')
+                before = snapshot(root)
+                original = subprocess.Popen
+                with patch.object(freshness.subprocess, 'Popen', wraps=original) as launch:
+                    result = self.observe(path, sha, source)
+                self.assertFalse(marker.exists())
+                self.assertIn('indexed submodules', result['error']['message'])
+                self.assertFalse(result['comparison']['qualified'])
+                self.assertFalse(any('status' in call.args[0] for call in launch.call_args_list))
+                self.assertEqual(snapshot(root), before)
+
+    def test_untracked_nested_repository_does_not_execute_its_filter(self):
+        with fixture() as (root, source, head, path, sha), \
+                fixture() as (nested_root, nested, _, _, _):
+            marker = nested_root / 'filter-executed'
+            script = nested_root / 'filter.py'
+            script.write_text('import pathlib, sys\n'
+                              'pathlib.Path(sys.argv[1]).write_text("executed")\n'
+                              'sys.stdout.buffer.write(sys.stdin.buffer.read())\n')
+            command = ' '.join(shlex.quote(str(arg)) for arg in
+                               (sys.executable, '-B', script, marker))
+            git(nested, 'config', 'filter.fixture.clean', command)
+            (nested / '.git' / 'info' / 'attributes').write_text('file filter=fixture\n')
+            (nested / 'file').write_text('two\n')
+            os.utime(nested / 'file', (1, 1))
+            nested.rename(source / 'embedded')
+            before = snapshot(root), snapshot(nested_root)
+            result = self.observe(path, sha, source)
+            self.assertFalse(marker.exists())
+            self.assertEqual(result['comparison']['outcome'], 'dirty_source')
+            self.assertEqual((snapshot(root), snapshot(nested_root)), before)
+
+    def test_filter_config_added_before_recheck_cannot_qualify(self):
+        with fixture() as (root, source, head, path, sha):
+            original = reader.read_graph
+            def configure(*args):
+                result = original(*args)
+                git(source, 'config', 'filter.fixture.required', 'true')
+                return result
+            with patch.object(reader, 'read_graph', side_effect=configure):
+                result = self.observe(path, sha, source)
+            self.assertEqual(result['comparison']['outcome'], 'unstable_source')
+            self.assertIn('filter configuration', result['source']['recheck_error']['message'])
+            self.assertFalse(result['comparison']['qualified'])
 
     def test_cli_no_writes_and_json(self):
         with fixture() as (root, source, head, path, sha):

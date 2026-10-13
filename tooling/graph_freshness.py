@@ -66,6 +66,23 @@ def _oid(value):
     return isinstance(value, str) and re.fullmatch(r'[0-9a-f]{40}|[0-9a-f]{64}', value) is not None
 
 
+def _require_safe_status(root):
+    """Reject extension execution before Git can revalidate tracked contents."""
+    # Query names only, across the same effective scopes (including includes and
+    # worktree config) as status. Attributes from any source can select a driver;
+    # disabling drivers would change cleanliness semantics, so fail closed even
+    # for unused/empty filter definitions instead of attempting attribute matching.
+    keys = _git(root, 'config', '--includes', '--null', '--list', '--name-only')
+    if any(key.lower().startswith(b'filter.') for key in keys.split(b'\0')):
+        raise ObservationError('source observation unavailable: Git filter configuration')
+    # A submodule has independent configuration. Do not enter it or report a
+    # clean parent while suppressing its dirty state. ls-files reads index entries
+    # without content conversion; status also disables recursion defensively.
+    entries = _git(root, 'ls-files', '--stage', '-z')
+    if any(entry.startswith(b'160000 ') for entry in entries.split(b'\0')):
+        raise ObservationError('source observation unavailable: indexed submodules')
+
+
 def _observe_source(source_root):
     """Reusable read-only sample; equal samples cannot exclude intervening edits."""
     try:
@@ -78,8 +95,9 @@ def _observe_source(source_root):
     if Path(top).resolve() != root:
         raise ObservationError('source root must be the exact Git worktree root')
     head = _git(root, 'rev-parse', '--verify', 'HEAD^{commit}').decode('ascii').strip()
+    _require_safe_status(root)
     status = _git(root, 'status', '--porcelain=v1', '-z', '--untracked-files=all',
-                  '--ignore-submodules=none')
+                  '--ignore-submodules=all')
     after = _git(root, 'rev-parse', '--verify', 'HEAD^{commit}').decode('ascii').strip()
     if not _oid(head) or not _oid(after):
         raise ObservationError('invalid observed Git HEAD')
@@ -109,6 +127,8 @@ def _envelope(repository, expected, target):
                     'scope': 'observed_local_checkout_and_optional_caller_target'},
         limitations=['Equal samples cannot exclude intervening changes.',
                      'Git cleanliness excludes ignored files and is not build-input inventory proof.',
+                     'Filter-configured checkouts and indexed submodules cannot be qualified.',
+                     'Git configuration must remain unchanged during observation.',
                      'Repository-to-root binding and optional target authority are caller supplied.',
                      'Canonical latest source and build-time provenance are not established.'],
         truncation_reason=None,

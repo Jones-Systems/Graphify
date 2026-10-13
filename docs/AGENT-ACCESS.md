@@ -66,7 +66,19 @@ No network request, fetch, checkout, index refresh write, ledger update, pointer
 change, or rebuild is performed. Run with `-B` to prevent bytecode files. Git
 runs with optional locks and lazy fetching disabled; fsmonitor and untracked
 cache are disabled for these observations. Each Git command is limited to ten
-seconds and 1 MiB of output. Observation failure cannot qualify a snapshot.
+seconds and 1 MiB of output. Before status, a bounded names-only config read
+includes system, global/XDG, local, enabled worktree configuration and conditional
+includes. Any `filter.*` key makes source observation unavailable, including
+unused or empty definitions: status can execute clean/process filters while
+revalidating tracked content, and disabling them could change cleanliness
+semantics. This gate does not depend on where attributes select a driver (for
+example worktree/index attributes, `.git/info/attributes`, or global attributes).
+Indexed submodules also make observation unavailable; their independent config
+is not traversed, and status recursion is disabled. These cases return
+`ObservationError` / `observation_error` with qualification false, not a clean
+checkout claim. Git configuration must remain unchanged during observation;
+these separate read-only samples are not a sandbox against concurrent hostile
+reconfiguration. Observation failure cannot qualify a snapshot.
 
 The `graphify-freshness-result/v1` JSON reports observer version, repository,
 expected/validated catalog digest, archive and graph digests, snapshot head,
@@ -76,8 +88,9 @@ coverage. Reader validation errors retain their exception type and bounded
 message. Source heads and dirty state are sampled around selected-store
 validation; changed or failed rechecks produce `unstable_source`. Equal samples
 cannot exclude intervening edits. Git cleanliness covers tracked and untracked
-status, including submodules, but excludes ignored files and is not an input
-inventory audit. Git status paths and the status listing are not emitted.
+status for accepted checkouts; indexed submodules cannot be qualified. It
+excludes ignored files and is not an input inventory audit. Git status paths and
+the status listing are not emitted.
 
 `clean_head_match` means only that the validated snapshot head matches the
 observed clean checkout. Dirty sources, changing samples, head mismatches,
