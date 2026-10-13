@@ -153,6 +153,27 @@ The fallback text from `status` does not prove a skill is installed or active.
 
 ## Refresh after source changes
 
+For a read-only comparison before deciding whether to refresh, bind one
+selected portable snapshot to its exact local checkout:
+
+```bash
+python3 -B tooling/graph_freshness.py --catalog /STORE/download-catalog.json \
+  --catalog-sha256 EXACT_SHA256 --repo OWNER/NAME --source-root /EXACT/CHECKOUT
+```
+
+Optionally add `--target-oid FULL_OID` for a caller-supplied target comparison.
+The observer validates through the delivered reader and samples Git before and
+after validation with optional locks disabled. Exit `0` means only a stable
+sampled clean-checkout head match (and matching target if supplied); exit `2`
+means an observation that does not qualify; runtime/validation errors exit `1`.
+Argument errors also exit `2`. Canonical latest source remains unknown, and
+build-time inventory/cleanliness provenance remains unverified. See the
+[observer contract](AGENT-ACCESS.md#local-freshness-observation) for bounds and
+limitations. Observation never starts a build, updates a freshness ledger or
+current pointer, or distributes/activates data. Producer provenance capture,
+authorized refresh verification, and revision-pinned distribution/activation
+remain separate gates; old ledger labels are not authority for them.
+
 For an authorized Git corpus, use its exact root:
 
 ```bash

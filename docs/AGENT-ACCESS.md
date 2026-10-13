@@ -47,6 +47,58 @@ archive without filesystem extraction. Member hashes and graph endpoints must
 validate before output. Archive and member sizes are bounded. This reads the
 selected graph, not the full portfolio, and avoids a second NetworkX copy.
 
+## Local Freshness Observation
+
+`tooling/graph_freshness.py` observes one explicit Git checkout above the delivered
+reader; it does not change the reader or pull contracts:
+
+```bash
+python3 -B tooling/graph_freshness.py --catalog /STORE/download-catalog.json \
+  --catalog-sha256 EXACT_SHA256 --repo OWNER/NAME --source-root /EXACT/CHECKOUT
+```
+
+All four bindings are required. The source root must be the exact Git worktree
+root, not a child directory; there is no repository, store, or root fallback.
+The repository-to-root association is caller supplied, not inferred from remotes.
+Optional `--target-oid FULL_OID` compares an exact caller-supplied commit identity;
+its authority basis stays `caller_supplied`, never automatic canonical proof.
+No network request, fetch, checkout, index refresh write, ledger update, pointer
+change, or rebuild is performed. Run with `-B` to prevent bytecode files. Git
+runs with optional locks and lazy fetching disabled; fsmonitor and untracked
+cache are disabled for these observations. Each Git command is limited to ten
+seconds and 1 MiB of output. Observation failure cannot qualify a snapshot.
+
+The `graphify-freshness-result/v1` JSON reports observer version, repository,
+expected/validated catalog digest, archive and graph digests, snapshot head,
+before/after source heads, Git cleanliness and status digests, UTC observation
+interval, sample stability, optional target comparison, and reader validation
+coverage. Reader validation errors retain their exception type and bounded
+message. Source heads and dirty state are sampled around selected-store
+validation; changed or failed rechecks produce `unstable_source`. Equal samples
+cannot exclude intervening edits. Git cleanliness covers tracked and untracked
+status, including submodules, but excludes ignored files and is not an input
+inventory audit. Git status paths and the status listing are not emitted.
+
+`clean_head_match` means only that the validated snapshot head matches the
+observed clean checkout. Dirty sources, changing samples, head mismatches,
+missing/empty selections, unavailable Git, and invalid inputs cannot qualify.
+A supplied target mismatch also prevents qualification, while the separate
+`local_clean_match` flag retains the local comparison. `canonical_currentness`
+remains `unknown`, including with a matching caller-supplied target. Existing
+archives lack reader-verified build-time inventory/cleanliness provenance; the
+result always retains that limitation rather than inferring it from a clean
+checkout today. No old freshness-ledger classification is consulted.
+
+Exit codes are `0` for this limited qualification, `2` for a valid observation
+that does not qualify, and `1` for runtime/validation errors. CLI argument errors
+use argparse's exit code `2`. JSON defaults to 32 KiB; `--max-bytes` permits
+4 KiB–1 MiB. Oversized coverage is explicitly omitted; an envelope still too
+large fails closed rather than emitting an unsupported qualification.
+
+Producer provenance capture, authorized refresh/build and verification,
+revision-pinned distribution, and host activation remain separate later gates.
+This observer establishes neither refreshed data nor installation or activation.
+
 ## Portable Synchronization
 
 `python3 -B tooling/graph_pull.py --catalog SOURCE --destination NEW_STORE
