@@ -47,6 +47,71 @@ archive without filesystem extraction. Member hashes and graph endpoints must
 validate before output. Archive and member sizes are bounded. This reads the
 selected graph, not the full portfolio, and avoids a second NetworkX copy.
 
+## Local Freshness Observation
+
+`tooling/graph_freshness.py` observes one explicit Git checkout above the delivered
+reader; it does not change the reader or pull contracts:
+
+```bash
+python3 -B tooling/graph_freshness.py --catalog /STORE/download-catalog.json \
+  --catalog-sha256 EXACT_SHA256 --repo OWNER/NAME --source-root /EXACT/CHECKOUT
+```
+
+All four bindings are required. The source root must be the exact Git worktree
+root, not a child directory; there is no repository, store, or root fallback.
+The repository-to-root association is caller supplied, not inferred from remotes.
+Optional `--target-oid FULL_OID` compares an exact caller-supplied commit identity;
+its authority basis stays `caller_supplied`, never automatic canonical proof.
+No network request, fetch, checkout, index refresh write, ledger update, pointer
+change, or rebuild is performed. Run with `-B` to prevent bytecode files. Git
+runs with optional locks and lazy fetching disabled; fsmonitor and untracked
+cache are disabled for these observations. Each Git command is limited to ten
+seconds and 1 MiB of output. Before status, a bounded names-only config read
+includes system, global/XDG, local, enabled worktree configuration and conditional
+includes. Any `filter.*` key makes source observation unavailable, including
+unused or empty definitions: status can execute clean/process filters while
+revalidating tracked content, and disabling them could change cleanliness
+semantics. This gate does not depend on where attributes select a driver (for
+example worktree/index attributes, `.git/info/attributes`, or global attributes).
+Indexed submodules also make observation unavailable; their independent config
+is not traversed, and status recursion is disabled. These cases return
+`ObservationError` / `observation_error` with qualification false, not a clean
+checkout claim. Git configuration must remain unchanged during observation;
+these separate read-only samples are not a sandbox against concurrent hostile
+reconfiguration. Observation failure cannot qualify a snapshot.
+
+The `graphify-freshness-result/v1` JSON reports observer version, repository,
+expected/validated catalog digest, archive and graph digests, snapshot head,
+before/after source heads, Git cleanliness and status digests, UTC observation
+interval, sample stability, optional target comparison, and reader validation
+coverage. Reader validation errors retain their exception type and bounded
+message. Source heads and dirty state are sampled around selected-store
+validation; changed or failed rechecks produce `unstable_source`. Equal samples
+cannot exclude intervening edits. Git cleanliness covers tracked and untracked
+status for accepted checkouts; indexed submodules cannot be qualified. It
+excludes ignored files and is not an input inventory audit. Git status paths and
+the status listing are not emitted.
+
+`clean_head_match` means only that the validated snapshot head matches the
+observed clean checkout. Dirty sources, changing samples, head mismatches,
+missing/empty selections, unavailable Git, and invalid inputs cannot qualify.
+A supplied target mismatch also prevents qualification, while the separate
+`local_clean_match` flag retains the local comparison. `canonical_currentness`
+remains `unknown`, including with a matching caller-supplied target. Existing
+archives lack reader-verified build-time inventory/cleanliness provenance; the
+result always retains that limitation rather than inferring it from a clean
+checkout today. No old freshness-ledger classification is consulted.
+
+Exit codes are `0` for this limited qualification, `2` for a valid observation
+that does not qualify, and `1` for runtime/validation errors. CLI argument errors
+use argparse's exit code `2`. JSON defaults to 32 KiB; `--max-bytes` permits
+4 KiB–1 MiB. Oversized coverage is explicitly omitted; an envelope still too
+large fails closed rather than emitting an unsupported qualification.
+
+Producer provenance capture, authorized refresh/build and verification,
+revision-pinned distribution, and host activation remain separate later gates.
+This observer establishes neither refreshed data nor installation or activation.
+
 ## Portable Synchronization
 
 `python3 -B tooling/graph_pull.py --catalog SOURCE --destination NEW_STORE
@@ -137,3 +202,156 @@ Codex V3 affected-check navigation, T3 provider-session ownership, and Jones Cod
 message/provider routing. They must discover instructions, select a snapshot,
 handle freshness honestly, and verify source pointers. These trials establish
 usability, not comparative productivity or complete semantic correctness.
+
+## Portable Candidate Production
+
+`tooling/graph_pack.py` consumes **six explicit JSON path plus SHA-256 pairs**:
+`graph`, `validation`, `inventory`, `policy`, `extractor`, and `source`.
+Each CLI path requires its corresponding `--NAME-sha256`. The producer reads
+these documents only; it never opens corpus files named by inventory entries.
+
+- `graph` is the directed consumer graph, with `built_at_commit`, unique node
+  IDs and valid endpoints. `validation` retains structural errors, missing
+  batches, exclusions, semantic coverage and other consumer evidence. Their
+  exact bytes are preserved. Supplied source identities must agree; missing
+  source fields are reported as missing provenance.
+- `inventory` uses `graphify-pack-inventory/v1`, `source={repository,head}`,
+  `files=[{path,sha256,coverage}]`, and `limitations`. Paths are unique safe
+  relative names. Coverage is `structural`, `enriched`, or `unknown`;
+  structural coverage does not establish semantic enrichment.
+- `policy` uses `graphify-pack-policy/v1`, the same `source`, `name`, `rules`
+  (a JSON object), and `limitations`. Rules remain data. Packaging neither
+  enforces admission nor proves that any policy was executed.
+- `extractor` uses `graphify-pack-extractor/v1`, the same `source`, `name`,
+  `version` (string or null), `artifact_sha256` (SHA-256 or null), and
+  `limitations`. Null evidence remains explicitly missing.
+- `source` uses `graphify-pack-source/v1`, `source={repository,head}`,
+  `input_sha256={graph,validation,inventory,policy,extractor}` (the other five
+  exact input digests), `build_observation`, and `limitations`.
+  `build_observation` is null or `{head,dirty,stable}`; the last two values are
+  booleans or null. These are caller reports, not producer attestations.
+
+The four provenance schemas are closed. Graph record `source_file` paths and
+validation `covered_segments_by_file` keys, when present, must belong to the
+inventory. Absent file bindings remain limitations; valid structure is not
+complete coverage or truthful provenance. Invalid hashes, source identities,
+endpoints, paths, duplicated/nonfinite/deep JSON, symlink components and
+nonregular selected inputs fail closed.
+
+A new `--destination` contains `download-catalog.json`, `package.json`, and
+`archives/<archive-SHA256>.tar.gz`. The deterministic archive contains original
+graph/validation bytes, their hashes, all four provenance documents,
+qualification, and an archive manifest binding every member. `package.json`
+binds the six input digests, catalog, archive, graph, validation and source.
+The result's `package_sha256` binds that package document. Fixed member order,
+metadata and gzip timestamp make identical inputs produce identical outputs.
+The unchanged reader/pull validation routines validate the created closure.
+No old catalog, current pointer or binding is replaced. Handled failure or
+cancellation cleans only producer-owned entries; unknown cleanup/ownership
+changes stop and require reconciliation. A successful package remains a
+candidate with caller-supplied provenance and unknown canonical freshness.
+
+## Bounded Refresh Contract
+
+`tooling/graph_refresh.py --manifest /EXACT/manifest.json --manifest-sha256 SHA`
+is an additive, Linux/POSIX, ordinary-user orchestrator. Invoke with `python3 -B`.
+The digest-bound, closed `graphify-refresh-manifest/v1` selects one to eight
+unique repositories, processed sequentially. It has `schema`, `limits`, and
+`tasks`. All paths are explicit absolute normalized paths; source roots,
+selected files, adapters and output parents reject symlink traversal. There is
+no discovery, shell interpolation, fetch, legacy build invocation, or promotion.
+
+`limits` has positive integer `file_bytes` (at most 4 MiB), `input_bytes`
+(at most 16 MiB per task), `output_bytes` (at most 8 MiB combined adapter stdout
+and stderr), and `seconds` (at most 300 per adapter invocation). The manifest
+is at most 128 KiB. Each task has exactly:
+
+- `source={repository,head}` with a full recorded Git OID; `root` is the exact
+  checkout. `target_oid` is null or a full caller-supplied target OID.
+- `existing` is null or `{path,sha256}` selecting an existing portable catalog.
+  Every selected existing snapshot is validated and compared with clean Git
+  observations. A matching snapshot can return `unchanged`; a pointer's mere
+  existence never suppresses extraction. An invalid selected store fails
+  without fallback. `unchanged` retains the observer's unverified historical
+  build provenance; it does not certify matching policy/extractor versions.
+- `files` is an explicit list of 1–256 `{path,sha256}` admitted relative source
+  files; `deny` is a list of at most 128 case-sensitive `fnmatch` patterns.
+  Denies win, `.git` path components are always denied, and no-follow reads
+  reject links and nonregular files. No unlisted corpus content is captured.
+- `extractor={protocol,name,version,executable,script}`. Protocol is
+  `python-json/v1`; name and version are nonempty strings. Both executable and
+  script are `{path,sha256}` selections. The executable is a Python interpreter
+  (up to 64 MiB); the script fits `file_bytes`. Missing, changed or unsupported
+  adapter evidence defers new extraction. No dependencies are installed.
+- `destination` is a new transaction directory outside all selected source
+  roots. Destinations cannot overlap. `lock` names a caller-provisioned regular
+  file with a stable inode. The orchestrator acquires a nonblocking exclusive
+  advisory lock without changing its bytes or deleting it. Cooperating callers
+  must share the same lock for overlapping work; it is not a global lock.
+
+Before extraction, clean matching before/after Git samples surround capture
+of all admitted bytes with their supplied hashes. The new transaction retains
+`inputs/`, `request.json` and `capture.json` before the adapter starts. The
+request binds manifest digest, source, files, policy, exact executable/script
+identity, limits and samples. The pinned interpreter and script descriptors
+are invoked without a shell, with `-I -B`, a minimal environment and the request
+on stdin. `stage` names the captured input directory. The adapter must read
+only these staged source inputs, write no files, spawn no descendants, and
+emit one JSON object on stdout:
+
+```json
+{
+  "schema": "graphify-refresh-response/v1",
+  "request_sha256": "SHA256_OF_EXACT_STDIN_BYTES",
+  "graph": {"source": {"repository": "OWNER/NAME", "head": "FULL_OID"},
+    "built_at_commit": "FULL_OID", "directed": true, "nodes": [], "links": [],
+    "refresh_request_sha256": "SHA256_OF_EXACT_STDIN_BYTES"},
+  "validation": {"source": {"repository": "OWNER/NAME", "head": "FULL_OID"},
+    "refresh_request_sha256": "SHA256_OF_EXACT_STDIN_BYTES"},
+  "coverage": {"admitted/path.py": "structural"}
+}
+```
+
+`coverage` must select exactly the admitted paths with structural/enriched/
+unknown values; these are adapter claims. Graph and validation independently
+bind source and request digest. Staged and live input hashes, source samples
+and adapter descriptor signatures are rechecked afterward. The returned
+`adapter-response.json` and six producer documents under `evidence/` bind
+fresh adapter output to admitted inventory, enforced selection policy and
+extractor identity. The producer creates `candidate/`; old stores and host
+bindings are untouched. Completion requires successful new extraction and
+validation of this candidate, not repackaging an old graph.
+
+`graphify-refresh-result/v1` distinguishes `completed`, `unchanged`, `deferred`,
+`failed` and `unknown`, with per-task outcomes and a worst-outcome summary.
+Exit 0 covers completed/unchanged only; deferred exits 2 and failed/unknown
+exit 1. Argument errors also exit 2. Dirty, missing or changing sources cannot
+complete; collisions and lock contention defer. Unknown creation, process
+cancellation or transaction ownership effects stop every remaining task.
+Handled cancellation also defers remaining tasks. The JSON receipt is capped
+at 64 KiB; overflow emits an explicit unknown result, never truncated success.
+The manifest digest identifies the full selected scope if reconciliation is
+needed. Transaction paths persist, including partial failures; no retry or
+cleanup of a preexisting destination is automatic.
+
+The adapter has a wall-clock deadline, bounded stdout/stderr, zero regular-file
+size and core-dump limits, and process-group termination/reaping. These are
+**not** network, memory, PID, filesystem or credential-access isolation. Only
+one direct adapter process runs at a time. A hostile adapter can escape its
+process group or alter external state; this trusted-code contract cannot
+bound those effects. An unexpected staging entry produces unknown, even an
+empty file. Source Git commands and selected-store reads retain the existing
+observer/reader limits; `seconds` is not a whole-refresh deadline. Equal samples
+cannot exclude transient changes, ignored files are not Git cleanliness proof,
+and matching caller targets cannot establish canonical latest-source authority.
+Successful capture does establish the exact selected bytes supplied for this
+attempt. Ordinary tests use synthetic data only, and supply no operational
+permission for real extraction or model calls.
+
+Retained transactions are operational evidence, not disposable `/tmp` scratch.
+Their caller must approve a destination, retention lifetime and creator-owned
+cleanup/reconciliation route before execution. Source publication is separate
+from a licensed exact-revision host-tooling import, release installation,
+approved corpus/model execution, synchronization, independently verified
+promotion, scheduler activation and host binding updates. None is activated by
+these source modules. See the [runbook](RUNBOOK.md#portable-refresh-invocation-and-operational-gates).

@@ -153,6 +153,35 @@ The fallback text from `status` does not prove a skill is installed or active.
 
 ## Refresh after source changes
 
+For a read-only comparison before deciding whether to refresh, bind one
+selected portable snapshot to its exact local checkout:
+
+```bash
+python3 -B tooling/graph_freshness.py --catalog /STORE/download-catalog.json \
+  --catalog-sha256 EXACT_SHA256 --repo OWNER/NAME --source-root /EXACT/CHECKOUT
+```
+
+Optionally add `--target-oid FULL_OID` for a caller-supplied target comparison.
+The observer rejects any effective `filter.*` configuration and indexed
+submodules before status, returning unavailable source observation without
+executing filters or entering submodules. It checks names across Git config
+scopes and includes; unused or empty filter definitions are rejected too.
+Keep Git configuration unchanged during the observation: sampling does not
+isolate concurrent reconfiguration. Do not disable filters to force a clean
+qualification; that would change the checkout comparison's semantics.
+
+The observer validates through the delivered reader and samples Git before and
+after validation with optional locks disabled. Exit `0` means only a stable
+sampled clean-checkout head match (and matching target if supplied); exit `2`
+means an observation that does not qualify; runtime/validation errors exit `1`.
+Argument errors also exit `2`. Canonical latest source remains unknown, and
+build-time inventory/cleanliness provenance remains unverified. See the
+[observer contract](AGENT-ACCESS.md#local-freshness-observation) for bounds and
+limitations. Observation never starts a build, updates a freshness ledger or
+current pointer, or distributes/activates data. Producer provenance capture,
+authorized refresh verification, and revision-pinned distribution/activation
+remain separate gates; old ledger labels are not authority for them.
+
 For an authorized Git corpus, use its exact root:
 
 ```bash
@@ -186,3 +215,87 @@ For changes confined to this guidance, verify the diff, paths, links,
 whitespace, and source correspondence. The default provenance checker reads
 excluded material and is unsuitable when the authorized read scope excludes
 it. Documentation checks establish documentation consistency only.
+
+## Portable Refresh Invocation And Operational Gates
+
+The additive producer and refresh contracts are documented in
+[agent access](AGENT-ACCESS.md#portable-candidate-production). The producer
+packages six explicitly selected JSON inputs; it does not extract a graph:
+
+```bash
+python3 -B tooling/graph_pack.py \
+  --graph /INPUT/graph.json --graph-sha256 GRAPH_SHA \
+  --validation /INPUT/validation.json --validation-sha256 VALIDATION_SHA \
+  --inventory /INPUT/inventory.json --inventory-sha256 INVENTORY_SHA \
+  --policy /INPUT/policy.json --policy-sha256 POLICY_SHA \
+  --extractor /INPUT/extractor.json --extractor-sha256 EXTRACTOR_SHA \
+  --source /INPUT/source.json --source-sha256 SOURCE_SHA \
+  --destination /NEW/CANDIDATE
+```
+
+For separately authorized automatic refresh, prepare and digest an exact
+`graphify-refresh-manifest/v1` as defined in the
+[refresh contract](AGENT-ACCESS.md#bounded-refresh-contract). For example,
+this shape selects one repository and a trusted synthetic-style adapter;
+placeholder hashes/OIDs must be replaced with verified values:
+
+```json
+{
+  "schema": "graphify-refresh-manifest/v1",
+  "limits": {"file_bytes": 1048576, "input_bytes": 4194304,
+    "output_bytes": 4194304, "seconds": 60},
+  "tasks": [{
+    "source": {"repository": "OWNER/NAME", "head": "FULL_SOURCE_OID"},
+    "root": "/EXACT/CHECKOUT", "target_oid": null,
+    "existing": {"path": "/OLD_STORE/download-catalog.json", "sha256": "CATALOG_SHA"},
+    "files": [{"path": "src/example.py", "sha256": "CONTENT_SHA"}],
+    "deny": ["private/*", "*.key"],
+    "extractor": {"protocol": "python-json/v1", "name": "approved-adapter", "version": "1",
+      "executable": {"path": "/EXACT/REAL/PYTHON", "sha256": "EXECUTABLE_SHA"},
+      "script": {"path": "/EXACT/adapter.py", "sha256": "SCRIPT_SHA"}},
+    "destination": "/APPROVED_RUNS/NEW_TRANSACTION",
+    "lock": "/APPROVED_RUNS/EXISTING_LOCK_FILE"
+  }]
+}
+```
+
+Set `existing` to null only for an explicitly selected initial build. The lock
+must already be a regular file, with a stable inode shared by cooperating
+invocations. Output parent directories must exist. Select a fresh transaction
+destination each attempt; never reuse a failed/unknown path before explicit
+reconciliation. Then invoke only within the owner's execution envelope:
+
+```bash
+python3 -B tooling/graph_refresh.py --manifest /EXACT/manifest.json \
+  --manifest-sha256 MANIFEST_SHA
+```
+
+Inspect every task outcome. Exit 0 can mean `unchanged`, which is a sampled
+clean-checkout match with historical build evidence still unverified;
+`completed` specifically means new extraction and a validated candidate.
+Deferred work never counts as completed. Save the bounded receipt with the
+manifest and retained transaction evidence. No candidate is promoted, and no
+existing catalog/current/binding pointer changes. The old legacy scripts,
+`FORCE` behavior and inherited systemd examples above are unchanged and remain
+unvalidated for this portable path. No scheduler is installed or enabled.
+
+Before any real run, bind owner-approved repositories, source roots and target
+basis, admitted paths/hashes and deny policy, exact interpreter/adapter,
+per-task limits, destinations, stable locks and retained-data lifetime. Review
+adapter behavior and authorize any model/provider/network effects separately:
+the adapter is trusted code, not a sandbox. Select synthetic test roots outside
+`/tmp`; the test fixture's creating layer cleans its exact tree on success,
+failure and handled cancellation. Operational transaction evidence persists
+until a separately authorized creator-owned cleanup/recovery action.
+
+Delivery gates remain separate: accepted Graphify licensing and notices plus
+an exact reviewed upstream revision are prerequisites for host-tooling import;
+source publication alone does not satisfy them. Host release/install requires
+its approved route and installed-revision readback. Data transfer and server
+synchronization require selected catalog/archive/graph identities and fresh
+per-host receipts; receipt equality alone is not live host authentication.
+Promotion requires independent verification of the exact candidate, admitted
+scope and source evidence. Scheduler activation, host bindings and assistant
+integration require their own explicit operational authorization and readback.
+Canonical latest-source qualification needs independently established target
+authority; a caller-supplied target or matching local checkout cannot supply it.
