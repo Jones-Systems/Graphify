@@ -175,6 +175,15 @@ def file_write(owned, parent, name, data):
         h.write(data)
 
 
+def verify_lock(path, expected):
+    """A lost or unreadable acquired lock makes concurrent effects unknown."""
+    try:
+        reader.require(packer.inode(os.stat(path, follow_symlinks=False)) == expected,
+                       'lock inode changed')
+    except ERRORS as exc:
+        raise Unknown('lock ownership requires reconciliation: ' + str(exc)) from exc
+
+
 def verify_retained(owned):
     """Reconcile owned staging without deleting unknown or adapter-created entries."""
     if not owned.created:
@@ -190,8 +199,9 @@ def verify_retained(owned):
         for _, _, fd, _ in owned.directories:
             expected = {n for p, n, _ in owned.files if p == fd}
             expected.update(n for p, n, _, _ in owned.directories if p == fd)
-            if fd == owned.directories[0][2] and getattr(owned, 'candidate_started', False):
-                # graph_pack owns this separate closure and its unknown-effect handling.
+            if fd == owned.directories[0][2] and getattr(owned, 'candidate_completed', False):
+                # Only a successful producer validated this separate closure. An
+                # attempted call may reject a foreign candidate before acquiring it.
                 actual = set(os.listdir(fd)) - {'candidate'}
             else:
                 actual = set(os.listdir(fd))
@@ -283,6 +293,9 @@ def execute_task(task, limits, manifest_sha):
                 raise Deferred('lock contention') from exc
             # The caller provisions this stable lock inode; no lock path is created/deleted.
             lock_identity = packer.inode(os.fstat(lock.fileno()))
+            # Run on success, early unchanged return, failure and cancellation,
+            # before closing the locked descriptor. Loss overrides ordinary outcomes.
+            stack.callback(verify_lock, task['lock'], lock_identity)
             try:
                 before = source_sample(task)
                 result['samples']['before'] = before
@@ -409,10 +422,9 @@ def execute_task(task, limits, manifest_sha):
                 file_write(owned, evidence, name + '.json', content)
                 inputs[name] = (destination / 'evidence' / (name + '.json'), reader.digest(content))
             owned.verify_ownership()
-            if packer.inode(os.stat(task['lock'], follow_symlinks=False)) != lock_identity:
-                raise Unknown('lock inode changed; concurrent effects require reconciliation')
-            owned.candidate_started = True
+            verify_lock(task['lock'], lock_identity)
             result['package'] = packer.pack(inputs, destination / 'candidate')
+            owned.candidate_completed = True
             result.update(status='completed', reason='new extraction and create-only candidate validated')
     except Deferred as exc:
         result.update(status='deferred', reason=str(exc)[:500])

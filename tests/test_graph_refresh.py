@@ -88,6 +88,152 @@ def one(root, manifest):
 
 
 class RefreshTests(unittest.TestCase):
+    def add_independent_task(self, root, manifest):
+        second = copy.deepcopy(manifest['tasks'][0])
+        second['source']['repository'] = 'Fixture/Independent'
+        second['destination'] = str(root / 'second')
+        lock = root / 'independent.lock'
+        lock.touch()
+        second['lock'] = str(lock)
+        manifest['tasks'].append(second)
+
+    def assert_halted(self, root, result):
+        self.assertEqual(result['status'], 'unknown', result)
+        self.assertEqual([t['status'] for t in result['tasks']], ['unknown', 'deferred'], result)
+        self.assertIn('not started', result['tasks'][1]['reason'])
+        self.assertFalse((root / 'second').exists())
+
+    def test_lost_lock_before_pack_halts_independent_task(self):
+        for change in ('missing', 'replacement', 'symlink', 'unreadable'):
+            with self.subTest(change=change), fixture() as (root, manifest):
+                self.add_independent_task(root, manifest)
+                original = refresh.run_adapter
+                stat = os.stat
+                def adapter(*args):
+                    response = original(*args)
+                    lock = root / 'refresh.lock'
+                    if change != 'unreadable':
+                        lock.rename(root / 'held.lock')
+                        if change == 'replacement':
+                            lock.touch()
+                        elif change == 'symlink':
+                            lock.symlink_to(root / 'held.lock')
+                    return response
+                def readback(path, *args, **kwargs):
+                    if change == 'unreadable' and str(path) == str(root / 'refresh.lock'):
+                        raise PermissionError('synthetic lock readback denial')
+                    return stat(path, *args, **kwargs)
+                with patch.object(refresh, 'run_adapter', adapter), patch.object(os, 'stat', readback):
+                    result = run(root, manifest)
+                self.assert_halted(root, result)
+                self.assertFalse((root / 'transaction/candidate').exists())
+
+    def test_lost_lock_after_pack_halts_and_retains_candidate(self):
+        with fixture() as (root, manifest):
+            self.add_independent_task(root, manifest)
+            original = packer.pack
+            def pack(*args):
+                result = original(*args)
+                (root / 'refresh.lock').rename(root / 'held.lock')
+                return result
+            with patch.object(packer, 'pack', pack):
+                result = run(root, manifest)
+            self.assert_halted(root, result)
+            self.assertTrue(result['tasks'][0]['retained'])
+            self.assertTrue((root / 'transaction/candidate/package.json').is_file())
+
+    def test_lost_lock_overrides_ordinary_failure(self):
+        with fixture() as (root, manifest):
+            self.add_independent_task(root, manifest)
+            def adapter(*args):
+                (root / 'refresh.lock').rename(root / 'held.lock')
+                raise ValueError('synthetic adapter failure')
+            with patch.object(refresh, 'run_adapter', adapter):
+                result = run(root, manifest)
+            self.assert_halted(root, result)
+
+    def test_lost_lock_overrides_unchanged(self):
+        with fixture() as (root, manifest):
+            self.assertEqual(one(root, manifest)['status'], 'completed')
+            manifest['tasks'][0]['existing'] = select(root / 'transaction/candidate/download-catalog.json')
+            manifest['tasks'][0]['destination'] = str(root / 'unchanged')
+            self.add_independent_task(root, manifest)
+            original = refresh.freshness.observe
+            def observe(*args):
+                result = original(*args)
+                (root / 'refresh.lock').rename(root / 'held.lock')
+                return result
+            with patch.object(refresh.freshness, 'observe', observe):
+                result = run(root, manifest)
+            self.assert_halted(root, result)
+            self.assertFalse((root / 'unchanged').exists())
+
+    def test_lost_lock_on_cancellation_is_unknown(self):
+        with fixture() as (root, manifest):
+            self.add_independent_task(root, manifest)
+            def adapter(*args):
+                (root / 'refresh.lock').rename(root / 'held.lock')
+                raise KeyboardInterrupt('synthetic cancellation')
+            with patch.object(refresh, 'run_adapter', adapter):
+                result = run(root, manifest)
+            self.assert_halted(root, result)
+            self.assertTrue((root / 'transaction/capture.json').is_file())
+
+    def test_foreign_candidate_before_producer_acquisition_halts_and_preserves(self):
+        for kind in ('directory', 'file', 'symlink'):
+            with self.subTest(kind=kind), fixture() as (root, manifest):
+                self.add_independent_task(root, manifest)
+                original = packer.pack
+                def pack(inputs, destination):
+                    if kind == 'directory':
+                        destination.mkdir()
+                        (destination / 'foreign').write_text('preserve')
+                    elif kind == 'file':
+                        destination.write_text('preserve')
+                    else:
+                        destination.symlink_to('missing-foreign-target')
+                    return original(inputs, destination)
+                with patch.object(packer, 'pack', pack):
+                    result = run(root, manifest)
+                self.assert_halted(root, result)
+                candidate = root / 'transaction/candidate'
+                if kind == 'symlink':
+                    self.assertEqual(os.readlink(candidate), 'missing-foreign-target')
+                else:
+                    retained = candidate / 'foreign' if kind == 'directory' else candidate
+                    self.assertEqual(retained.read_text(), 'preserve')
+
+    def test_foreign_candidate_racing_producer_create_is_unknown(self):
+        with fixture() as (root, manifest):
+            self.add_independent_task(root, manifest)
+            original = packer.OwnedOutput.create
+            def create(owned):
+                if owned.name == 'candidate':
+                    os.mkdir('candidate', dir_fd=owned.parent)
+                    (root / 'transaction/candidate/foreign').write_text('preserve')
+                return original(owned)
+            with patch.object(packer.OwnedOutput, 'create', create):
+                result = run(root, manifest)
+            self.assert_halted(root, result)
+            self.assertEqual((root / 'transaction/candidate/foreign').read_text(), 'preserve')
+
+    def test_reconciled_pack_failure_allows_independent_task(self):
+        with fixture() as (root, manifest):
+            self.add_independent_task(root, manifest)
+            original = packer.read_graph
+            calls = 0
+            def reject_first(*args, **kwargs):
+                nonlocal calls
+                calls += 1
+                if calls == 1:
+                    raise ValueError('synthetic validation failure after acquisition')
+                return original(*args, **kwargs)
+            with patch.object(packer, 'read_graph', reject_first):
+                result = run(root, manifest)
+            self.assertEqual([t['status'] for t in result['tasks']], ['failed', 'completed'], result)
+            self.assertFalse((root / 'transaction/candidate').exists())
+            self.assertTrue((root / 'second/candidate/package.json').is_file())
+
     def test_complete_new_extraction_package_and_no_promotion(self):
         with fixture() as (root, manifest):
             marker = root / 'current'
