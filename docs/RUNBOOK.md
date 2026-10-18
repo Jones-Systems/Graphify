@@ -29,6 +29,106 @@ The installer checks `MemAvailable` at entry: below 3072 MiB stops the
 operation and below 4096 MiB emits a warning. Its final memory reading is a
 sample, not a continuous guard.
 
+## Native portable source installation
+
+`tooling/install_portable.py` installs Graphify's own five portable Python
+helpers, independently of the legacy venv above and of host-tooling vendoring.
+It requires Linux, Python 3.10+ with its standard library, local Git supporting
+`--no-lazy-fetch` (older Git fails closed), and libc/
+filesystem support for Linux `renameat2(RENAME_NOREPLACE)`. It installs no pip
+packages, model dependencies, timers, services, global commands, skill links,
+agent bindings or graph data. This route makes no licensing determination and
+does not change host-tooling's source-owner/license import policy.
+
+The coordinator first binds the authorized host, an existing owner-controlled
+release parent outside the checkout, a trusted canonical Graphify checkout at
+an exact full commit, and the interpreter. A proposed dedicated parent is
+`~/.local/share/graphify/portable/releases`; the installer requires an explicit
+absolute path and never creates its ancestors. Host access, parent provisioning
+and source transfer use their separately authorized routes. Do not weaken SSH
+trust or use sudo to compensate for a missing route. Install VPS and test only
+when each has its own proved operation binding; one host's success is not fleet
+completion.
+
+From the reviewed, committed source installer, prepare the exact manifest:
+
+```bash
+python3 -B /SOURCE/tooling/install_portable.py prepare \
+  --source /SOURCE --revision FULL_COMMIT --destination /RELEASE_PARENT
+```
+
+The checkout must be its exact Git top-level, with HEAD equal to the selected
+commit and a recognized canonical `Jones-Systems/Graphify` origin spelling.
+That origin is a local assertion, not remote authentication. Git reads use local
+objects, disable replacement refs, lazy fetching and optional locks, and do not
+run checkout filters. The source checkout and its Git metadata must be trusted
+and stable for the operation; no repository or filesystem sandbox is claimed.
+No fetch occurs. Each Git subprocess has a ten-second deadline and bounded
+stdout. Only the explicit closure's blobs and the installer's blob are selected;
+uncommitted module bytes and untracked files are never copied. The running
+installer must itself be byte-identical to its committed blob, so an uncommitted
+installer cannot qualify a release. Read source and installer from the same
+accepted revision, rather than running an unrelated installed copy.
+
+Prepare emits `manifest`, `manifest_sha256` and the proposed `release` path.
+Review and retain that output, then pass its exact digest:
+
+```bash
+python3 -B /SOURCE/tooling/install_portable.py install \
+  --source /SOURCE --revision FULL_COMMIT --destination /RELEASE_PARENT \
+  --manifest-sha256 PREPARED_MANIFEST_SHA256
+python3 -B /SOURCE/tooling/install_portable.py verify \
+  --release /RELEASE_PARENT/PREPARED_MANIFEST_SHA256 \
+  --manifest-sha256 PREPARED_MANIFEST_SHA256
+```
+
+The closed `graphify-portable-release/v1` manifest binds repository, commit,
+the ordered five-file closure, and installer provenance. Every file record
+contains `path`, Git `blob_oid`, raw-byte `sha256`, byte count, committed
+`source_mode` and installed `mode` (`0444`). The installer record identifies
+the producer but its bytes are not added to the installed five-file closure.
+The release identity is SHA-256 of sorted-key compact ASCII manifest JSON with
+no trailing newline. `release.json` stores those bytes plus one newline.
+Digests bind the selected content, not publisher authenticity or licensing.
+
+The release contains exactly `release.json` and `tooling/{graph_read,
+graph_pull,graph_freshness,graph_pack,graph_refresh}.py`. Directories have mode
+`0555`; files have mode `0444`. Verification checks the exact entry set, modes,
+regular single-link files, bytes, Git blob hashes and manifest identity without
+opening any graph/store/binding. No-follow directory traversal rejects symlink
+components. Each source blob is capped at 1 MiB and the manifest at 16 KiB.
+Source and destination trees cannot overlap. Install creates a unique sibling
+stage, verifies it, and publishes without replacing an existing destination.
+An existing exact release is verified without rewriting it; drift or a collision
+fails. Filesystem durability uses file/directory fsync. Read-only modes and
+verification detect drift; the owning user can still deliberately change them.
+
+On failure or handled SIGINT/SIGTERM before publication, only the invocation's
+recorded staging entries are cleaned. Unknown ownership or unexpected entries
+refuse cleanup and report the retained stage path. A failure/cancellation after
+publication reports that the release requires readback and retains it. Reconcile
+that exact release with `verify` before retry. Forced process/host termination
+may leave a stage or published release; no automatic sweep or prior-output
+cleanup is provided. Keep required receipts outside disposable scratch.
+
+Qualification runs all five installed `--help` entrypoints with `python3 -B`,
+then bounded synthetic functional checks, and verifies the release again.
+Record exact interpreter, source revision and manifest identity independently
+for each host. A helper help check proves loadability, not a working graph
+store, production extractor, provider access or refresh success. The source
+tests exercise the real installed reader against a synthetic empty catalog;
+the five existing portable-tool suites cover their other synthetic behavior.
+
+Use explicit release paths, for example
+`python3 -B /RELEASE_PARENT/SHA/tooling/graph_read.py --help`. There is no
+`current` pointer. Rollback selects a previously verified retained release path;
+it neither removes files nor rolls back graphs or mutable state. The canonical
+query skill's automatic binding route still requires a Graphify Git checkout;
+this exported tree does not establish agent-binding adoption. A production
+`python-json/v1` refresh adapter and corpus authorization remain separate.
+G18-COR-002/003 remain deferred and unchanged for their affected operational
+guarantees. Installing these helpers neither repairs nor qualifies those paths.
+
 ## Deploy policies and review corpus scope
 
 The versioned policy owner is `policies/<corpus>/ignore.rules`. The default
