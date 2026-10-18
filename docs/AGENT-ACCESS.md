@@ -186,6 +186,25 @@ private populated stores outside source releases. No remote publication,
 repository visibility change, shared runtime activation, or sudo is part of
 this implementation.
 
+### Native portable source release
+
+The additive Graphify-owned `tooling/install_portable.py` prepares, installs and
+verifies an exact committed five-helper release. See the
+[native installation procedure](RUNBOOK.md#native-portable-source-installation)
+for the manifest, bounded Git-blob selection, no-replace publication, cleanup,
+qualification and explicit-path rollback contract. This ordinary-user Linux
+source route preserves Graphify custody and does not perform a host-tooling
+import or alter that import's licensing/owner policy. Shared host orchestration,
+transport and activation remain under their existing owners.
+
+The export contains no `.git`, query skill, host binding, catalog or archive.
+Its release manifest is installed-source evidence, not a substitute for the
+canonical skill's Git-checkout identity check. Invoke the helpers by explicit
+release paths; installation does not adopt them into automatic agent discovery,
+refresh schedules or assistant call paths. No dependencies or legacy venv are
+installed. The refresh helper still needs a separately qualified production
+extractor and explicit source/corpus execution authority.
+
 ## Acceptance And Checks
 
 Reader fixtures prove catalog confinement, digest/identity rejection, directed
