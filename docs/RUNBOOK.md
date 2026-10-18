@@ -379,6 +379,14 @@ existing catalog/current/binding pointer changes. The old legacy scripts,
 `FORCE` behavior and inherited systemd examples above are unchanged and remain
 unvalidated for this portable path. No scheduler is installed or enabled.
 
+An acquired lock that disappears, cannot be read back, or changes identity
+produces `unknown`, including when the loss is observed after candidate
+packaging or during an unchanged/error/cancellation exit. All remaining tasks
+stay unstarted, even with independent locks. A foreign `candidate/` rejected
+before producer acquisition likewise remains preserved and produces `unknown`.
+Reconcile the exact retained transaction and lock before any separately
+authorized retry; do not treat an existing candidate as successful completion.
+
 Before any real run, bind owner-approved repositories, source roots and target
 basis, admitted paths/hashes and deny policy, exact interpreter/adapter,
 per-task limits, destinations, stable locks and retained-data lifetime. Review
@@ -422,6 +430,9 @@ execution; the existing legacy bootstrap does not establish that evidence.
 Before a real pilot, retain all source-selection, host, stable-lock,
 destination/lifetime and independent-verification requirements above, plus
 measure time, peak RAM and output for one bounded selection before choosing
-a schedule. The original G18-COR-002/003 operational guarantees remain blocked.
+a schedule. G18-COR-002/003 now have synthetic source corrections; formal
+closure still requires affected independent review of the correction revision.
+Qualify the selected installed revision and its lock/transaction assumptions
+before any real invocation. Source checks do not establish operational acceptance.
 Do not use successful synthetic adapter tests as acceptance of those paths,
 real graph freshness, server synchronization or a legacy replacement.

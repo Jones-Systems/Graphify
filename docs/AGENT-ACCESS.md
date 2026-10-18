@@ -347,6 +347,19 @@ Exit 0 covers completed/unchanged only; deferred exits 2 and failed/unknown
 exit 1. Argument errors also exit 2. Dirty, missing or changing sources cannot
 complete; collisions and lock contention defer. Unknown creation, process
 cancellation or transaction ownership effects stop every remaining task.
+After acquiring the lock, missing, unreadable or replaced lock identity is
+`unknown`. Identity is checked before packaging and again on every task exit
+while the descriptor remains locked, including unchanged, failure and
+cancellation paths. A loss observed after packaging retains the candidate as
+evidence but cannot report task completion or start a later task, even one
+using a different lock. These are sampled checks; cooperating callers must
+still preserve the lock inode throughout the run.
+
+The retained-transaction check exempts `candidate/` only after the producer
+successfully validates its owned closure. A foreign file, directory or
+symlink rejected before producer acquisition remains unexpected, is preserved,
+and makes the task `unknown`. A producer failure with confirmed cleanup and
+unchanged transaction ownership remains `failed` and may allow later tasks.
 Handled cancellation also defers remaining tasks. The JSON receipt is capped
 at 64 KiB; overflow emits an explicit unknown result, never truncated success.
 The manifest digest identifies the full selected scope if reconciliation is
@@ -420,5 +433,8 @@ This separate family does not claim graphifyy/networkx parity or replace
 existing graph identities or semantics. It is available as reviewed source
 preparation; it is **not included** in the fixed five-helper installer release.
 Selection, real-corpus execution, operational resource qualification,
-promotion and binding remain separate. G18-COR-002/003 retain their original
-deferred P2 operational blocking effects; this adapter does not qualify them.
+promotion and binding remain separate. The original G18-COR-002/003 P2
+findings have separate refresh-source corrections and synthetic regression
+coverage. Formal finding closure requires affected independent review of the
+selected correction revision; this adapter alone does not qualify those
+guarantees or an installed runtime.
