@@ -399,3 +399,29 @@ scope and source evidence. Scheduler activation, host bindings and assistant
 integration require their own explicit operational authorization and readback.
 Canonical latest-source qualification needs independently established target
 authority; a caller-supplied target or matching local checkout cannot supply it.
+
+### Preparing the structural adapter
+
+For a separately selected structural candidate, the source adapter is
+`tooling/refresh_adapter_structural.py`; set extractor protocol
+`python-json/v1`, name `graphify-stdlib-structural`, version `1`, and retain the
+exact script path/SHA256. Bind a real, non-symlink Python executable and hash
+that works with the existing `/proc/self/fd/N -I -B` invocation. No pip,
+graphifyy, networkx, provider or model dependency is required. The
+[structural family contract](AGENT-ACCESS.md#separate-structural-adapter-family)
+defines its syntax subset, request validation, limits and coverage semantics.
+
+This file is a separate upstream source contribution, outside the fixed
+five-helper installer closure. Its synthetic checks exercise the unchanged
+refresh/pack/reader/pull chain; they neither install this adapter nor authorize
+a real pilot. Preserve existing legacy graph identities and explicitly select
+this family for a new candidate. Legacy-parity extraction still needs an exact
+interpreter and hash-locked dependency closure proved under fd-pinned isolated
+execution; the existing legacy bootstrap does not establish that evidence.
+
+Before a real pilot, retain all source-selection, host, stable-lock,
+destination/lifetime and independent-verification requirements above, plus
+measure time, peak RAM and output for one bounded selection before choosing
+a schedule. The original G18-COR-002/003 operational guarantees remain blocked.
+Do not use successful synthetic adapter tests as acceptance of those paths,
+real graph freshness, server synchronization or a legacy replacement.

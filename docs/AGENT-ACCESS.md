@@ -374,3 +374,51 @@ from a licensed exact-revision host-tooling import, release installation,
 approved corpus/model execution, synchronization, independently verified
 promotion, scheduler activation and host binding updates. None is activated by
 these source modules. See the [runbook](RUNBOOK.md#portable-refresh-invocation-and-operational-gates).
+
+### Separate structural adapter family
+
+`tooling/refresh_adapter_structural.py` implements the existing stdin/stdout
+protocol as `graphify-stdlib-structural`, version `1`. Select that exact
+extractor name/version and pin both script and real interpreter path/hash in
+the refresh manifest. It is standard-library-only and runs under the existing
+descriptor-pinned `-I -B` invocation. It reads only admitted staged files,
+rejecting symlink traversal, hard links, nonregular files, changed bytes and
+hash mismatches. It validates the closed request, matching admission policy,
+clean/equal caller samples and the exact stdin digest; it does not independently
+observe the source or authenticate those samples.
+
+Python extraction uses `ast.parse` without importing or executing admitted
+code. File/class/function nodes and lexical `contains` edges use stable,
+family-specific IDs. Imports resolve only exact admitted root-relative
+`module.py` or `module/__init__.py` files; relative imports use the containing
+package path. Ambiguous or absent modules are unresolved references. Imported
+symbols, runtime module search paths, types and calls are not resolved.
+Markdown extraction recognizes plain inline relative links to admitted paths,
+with optional fragment/query suffixes. It skips images, external/absolute
+links and fenced/indented/inline code; reference-style links, escaped or nested
+destinations, percent decoding and full CommonMark parsing are outside this
+subset. Unresolved recognized relative targets are recorded without reads.
+
+Supported files parsed by this subset have `structural` coverage; unsupported
+files and syntax, recursion or decoding failures have `unknown` coverage and
+contribute to `structural_parser_errors`. Coverage is never `enriched`;
+`semantic_coverage` is `none`, validation remains `partial`, and empty covered
+segment lists make no semantic claim. Every graph record carries an admitted
+`source_file`; graph/validation retain source/head and request SHA256. Records
+are sorted and deterministic for identical request bytes and interpreter.
+
+Bounds are 512 KiB request bytes, 24 JSON nesting levels, 10,000 request values,
+100,000 AST nodes per Python file, 20,000 total graph/reference/error records,
+and 4,096-character text fields. Existing manifest input/output byte limits
+also apply. Records are budgeted during extraction and the complete response
+is checked before stdout. Malformed/admission/hash/no-follow/resource failures
+exit nonzero without success JSON. These bounds are not process RAM isolation.
+The adapter writes no files, launches no children, reads no environment and
+uses no network or model service.
+
+This separate family does not claim graphifyy/networkx parity or replace
+existing graph identities or semantics. It is available as reviewed source
+preparation; it is **not included** in the fixed five-helper installer release.
+Selection, real-corpus execution, operational resource qualification,
+promotion and binding remain separate. G18-COR-002/003 retain their original
+deferred P2 operational blocking effects; this adapter does not qualify them.
