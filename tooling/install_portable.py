@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Install Graphify's five portable helpers from explicit local Git blobs.
+"""Install a Graphify portable helper closure from explicit local Git blobs.
+
+Closure v1 (the default) is the original five helpers; v2 is a closed ten-helper
+superset. Each command selects one closure, and verification rejects the other.
 
 Linux-only, ordinary-user source installation. No dependencies, graph stores,
 bindings, current pointers or services are installed. Expected digests bind
@@ -26,6 +29,11 @@ SCHEMA = 'graphify-portable-release/v1'
 REPOSITORY = 'Jones-Systems/Graphify'
 FILES = tuple('tooling/' + name for name in (
     'graph_freshness.py', 'graph_pack.py', 'graph_pull.py', 'graph_read.py', 'graph_refresh.py'))
+SCHEMA_V2 = 'graphify-portable-release/v2'
+FILES_V2 = FILES + tuple('tooling/' + name for name in (
+    'graph_catalog.py', 'graph_refresh_incremental.py', 'fragment_cache.py',
+    'runtime_identity.py', 'refresh_adapter_structural.py'))
+CLOSURES = {'v1': (SCHEMA, FILES), 'v2': (SCHEMA_V2, FILES_V2)}
 INSTALLER = 'tooling/install_portable.py'
 MAX_BLOB = 1024 * 1024
 MAX_MANIFEST = 16384
@@ -151,7 +159,13 @@ def source_blob(source, revision, path):
             'bytes': len(raw), 'source_mode': mode, 'mode': '0444'}, raw
 
 
-def prepare(source, revision, destination):
+def closure_of(closure):
+    require(isinstance(closure, str) and closure in CLOSURES, 'invalid_closure_selection')
+    return CLOSURES[closure]
+
+
+def prepare(source, revision, destination, closure='v1'):
+    schema, files = closure_of(closure)
     source, destination = absolute(source), absolute(destination)
     require(oid(revision), 'invalid_revision')
     require(source != destination and source not in destination.parents
@@ -169,7 +183,7 @@ def prepare(source, revision, destination):
                            b'https://github.com/Jones-Systems/Graphify',
                            b'git@github.com:Jones-Systems/Graphify.git'), 'source_repository_mismatch')
         records, payloads = [], {}
-        for path in FILES:
+        for path in files:
             record, raw = source_blob(source, revision, path)
             records.append(record)
             payloads[path] = raw
@@ -177,20 +191,23 @@ def prepare(source, revision, destination):
         running = absolute(os.path.abspath(__file__))
         with directory(running.parent) as script_parent:
             require(read_file(script_parent, running.name, MAX_BLOB) == raw, 'installer_revision_mismatch')
-        manifest = {'schema': SCHEMA, 'repository': REPOSITORY, 'revision': revision,
+        manifest = {'schema': schema, 'repository': REPOSITORY, 'revision': revision,
                     'files': records, 'installer': installer}
         require(git(source, 'rev-parse', '--verify', 'HEAD^{commit}', limit=128).decode().strip()
                 == revision, 'source_head_changed')
         return manifest, payloads
 
 
-def validate_manifest(value):
+def validate_manifest(value, closure='v1'):
+    schema, files = closure_of(closure)
     require(isinstance(value, dict) and set(value) == {'schema', 'repository', 'revision', 'files', 'installer'},
             'invalid_manifest')
-    require(value['schema'] == SCHEMA and value['repository'] == REPOSITORY and oid(value['revision']),
+    require(value['schema'] == schema
+            or value['schema'] not in tuple(known for known, _ in CLOSURES.values()), 'release_closure_mismatch')
+    require(value['schema'] == schema and value['repository'] == REPOSITORY and oid(value['revision']),
             'invalid_manifest_identity')
-    require(isinstance(value['files'], list) and len(value['files']) == len(FILES), 'invalid_closure')
-    for record, path in zip([*value['files'], value['installer']], [*FILES, INSTALLER]):
+    require(isinstance(value['files'], list) and len(value['files']) == len(files), 'invalid_closure')
+    for record, path in zip([*value['files'], value['installer']], [*files, INSTALLER]):
         require(isinstance(record, dict) and set(record) ==
                 {'path', 'blob_oid', 'sha256', 'bytes', 'source_mode', 'mode'}, 'invalid_manifest_record')
         require(record['path'] == path and oid(record['blob_oid'])
@@ -210,7 +227,8 @@ def pairs(values):
     return result
 
 
-def verify_fd(root, expected):
+def verify_fd(root, expected, closure='v1'):
+    _, files = closure_of(closure)
     require(isinstance(expected, str) and re.fullmatch(r'[0-9a-f]{64}', expected) is not None,
             'invalid_manifest_digest')
     require(stat.S_IMODE(os.fstat(root).st_mode) == 0o555, 'directory_mode_mismatch')
@@ -220,13 +238,13 @@ def verify_fd(root, expected):
         manifest = json.loads(raw, object_pairs_hook=pairs)
     except (ValueError, RecursionError) as exc:
         raise InstallError('invalid_manifest_json') from exc
-    validate_manifest(manifest)
+    validate_manifest(manifest, closure)
     require(raw == encoded(manifest) + b'\n' and digest(encoded(manifest)) == expected,
             'manifest_digest_mismatch')
     tooling = os.open('tooling', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root)
     try:
         require(stat.S_IMODE(os.fstat(tooling).st_mode) == 0o555, 'directory_mode_mismatch')
-        require(set(os.listdir(tooling)) == {Path(path).name for path in FILES}, 'unexpected_release_contents')
+        require(set(os.listdir(tooling)) == {Path(path).name for path in files}, 'unexpected_release_contents')
         for record in manifest['files']:
             data = read_file(tooling, Path(record['path']).name, MAX_BLOB, 0o444)
             require(len(data) == record['bytes'] and digest(data) == record['sha256']
@@ -236,11 +254,12 @@ def verify_fd(root, expected):
     return manifest
 
 
-def verify(release, expected):
+def verify(release, expected, closure='v1'):
+    closure_of(closure)
     release = absolute(release)
     require(release.name == expected, 'release_name_mismatch')
     with directory(release) as root:
-        return verify_fd(root, expected)
+        return verify_fd(root, expected, closure)
 
 
 def rename_new(parent, old, new):
@@ -333,9 +352,9 @@ class Stage:
                 os.close(fd)
 
 
-def install(source, revision, destination, expected):
+def install(source, revision, destination, expected, closure='v1'):
     require(sys.platform == 'linux', 'unsupported_platform')
-    manifest, payloads = prepare(source, revision, destination)
+    manifest, payloads = prepare(source, revision, destination, closure)
     require(digest(encoded(manifest)) == expected, 'manifest_digest_mismatch')
     destination = absolute(destination)
     with directory(destination) as parent:
@@ -347,7 +366,7 @@ def install(source, revision, destination, expected):
         except FileNotFoundError:
             pass
         else:
-            return verify(destination / expected, expected)
+            return verify(destination / expected, expected, closure)
         stage = Stage(parent)
         try:
             stage.create()
@@ -356,7 +375,7 @@ def install(source, revision, destination, expected):
             stage.write(stage.root, 'release.json', encoded(manifest) + b'\n')
             os.fchmod(stage.tooling, 0o555)
             os.fchmod(stage.root, 0o555)
-            verify_fd(stage.root, expected)
+            verify_fd(stage.root, expected, closure)
             os.fsync(stage.tooling)
             os.fsync(stage.root)
             mask = signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)
@@ -368,7 +387,7 @@ def install(source, revision, destination, expected):
                 os.fsync(parent)
             finally:
                 signal.pthread_sigmask(signal.SIG_SETMASK, mask)
-            verify(destination / expected, expected)
+            verify(destination / expected, expected, closure)
             return manifest
         except BaseException as original:
             mask = signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)
@@ -396,9 +415,11 @@ def main(argv=None):
         sub.add_argument('--destination', required=True, help='existing owner-controlled release parent')
         if name == 'install':
             sub.add_argument('--manifest-sha256', required=True)
+        sub.add_argument('--closure', choices=tuple(CLOSURES), default='v1')
     sub = commands.add_parser('verify')
     sub.add_argument('--release', required=True)
     sub.add_argument('--manifest-sha256', required=True)
+    sub.add_argument('--closure', choices=tuple(CLOSURES), default='v1')
     args = parser.parse_args(argv)
     old = {}
     def cancel(signum, frame):
@@ -407,12 +428,14 @@ def main(argv=None):
         for sig in SIGNALS:
             old[sig] = signal.signal(sig, cancel)
         if args.command == 'verify':
-            manifest = verify(args.release, args.manifest_sha256)
+            manifest = verify(args.release, args.manifest_sha256, args.closure)
             result = {'status': 'verified', 'manifest_sha256': args.manifest_sha256,
                       'revision': manifest['revision'], 'release': args.release}
         else:
-            manifest = (prepare(args.source, args.revision, args.destination)[0] if args.command == 'prepare'
-                        else install(args.source, args.revision, args.destination, args.manifest_sha256))
+            manifest = (prepare(args.source, args.revision, args.destination, args.closure)[0]
+                        if args.command == 'prepare'
+                        else install(args.source, args.revision, args.destination, args.manifest_sha256,
+                                     args.closure))
             sha = digest(encoded(manifest))
             result = {'status': 'prepared' if args.command == 'prepare' else 'installed',
                       'manifest': manifest, 'manifest_sha256': sha,
