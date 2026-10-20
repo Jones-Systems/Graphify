@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Structural-only python-json/v1 adapter; stdin request, stdout response.
+"""Structural-only python-json/v1 and v2 adapter; stdin request, stdout response.
 
 Reads only explicit staged inputs. No execution/import of source, file writes,
 subprocesses, environment lookup or network. This family is not legacy parity.
+Both protocols extract file-local fragments and assemble them over the whole
+admitted set; v2 also accepts verified reusable fragments and returns new ones.
 """
 import ast
 from contextlib import contextmanager
@@ -22,6 +24,13 @@ MAX_RECORDS = 20000
 MAX_AST_NODES = 100000
 LIMITS = dict(file_bytes=4 * 1024**2, input_bytes=16 * 1024**2,
               output_bytes=8 * 1024**2, seconds=300)
+REQUEST_V1, REQUEST_V2 = 'graphify-refresh-request/v1', 'graphify-refresh-request/v2'
+FRAGMENT = 'graphify-structural-fragment/v1'
+GIT_LIMITATION = 'Git-object input; checkout cleanliness not observed.'
+
+
+class Limit(ValueError):
+    """A per-file bound; v1 fails the request, v2 records the file as unknown."""
 
 
 def require(condition, message):
@@ -61,7 +70,7 @@ def path(value, absolute=False):
     return p
 
 
-def strict_json(raw):
+def strict_json(raw, max_items=10000):
     def pairs(items):
         result = {}
         for key, value in items:
@@ -75,7 +84,7 @@ def strict_json(raw):
     while pending:
         item, depth = pending.pop()
         count += 1
-        require(count <= 10000 and depth <= 24, 'request complexity limit')
+        require(count <= max_items and depth <= 24, 'request complexity limit')
         if isinstance(item, dict):
             pending.extend((v, depth + 1) for v in item.values())
         elif isinstance(item, list):
@@ -85,10 +94,13 @@ def strict_json(raw):
     return value
 
 
-def validate(request):
-    closed(request, ('schema', 'manifest_sha256', 'source', 'stage', 'files',
-                     'policy', 'extractor', 'samples', 'limits'))
-    require(request['schema'] == 'graphify-refresh-request/v1', 'unsupported request')
+def overlaps(p, taken):
+    return p in taken or any(p.startswith(q + '/') or q.startswith(p + '/') for q in taken)
+
+
+def validate_common(request, keys, schema):
+    closed(request, keys)
+    require(request['schema'] == schema, 'unsupported request')
     checksum(request['manifest_sha256'])
     source = request['source']
     closed(source, ('repository', 'head'))
@@ -105,13 +117,29 @@ def validate(request):
         require(type(limits[key]) is int and 1 <= limits[key] <= maximum, 'invalid limit')
     files = request['files']
     require(isinstance(files, list) and 1 <= len(files) <= 256, 'invalid files')
+    return source, files
+
+
+def validate_extractor(extractor, protocol):
+    closed(extractor, ('protocol', 'name', 'version', 'executable', 'script'))
+    require(extractor['protocol'] == protocol and extractor['name'] == NAME
+            and extractor['version'] == VERSION, 'wrong extractor family')
+    for key in ('executable', 'script'):
+        closed(extractor[key], ('path', 'sha256'))
+        path(extractor[key]['path'], absolute=True)
+        checksum(extractor[key]['sha256'])
+
+
+def validate(request):
+    source, files = validate_common(
+        request, ('schema', 'manifest_sha256', 'source', 'stage', 'files',
+                  'policy', 'extractor', 'samples', 'limits'), REQUEST_V1)
     admitted = set()
     for entry in files:
         closed(entry, ('path', 'sha256'))
         p = str(path(entry['path']))
         checksum(entry['sha256'])
-        require(p not in admitted and not any(p.startswith(q + '/') or q.startswith(p + '/')
-                                              for q in admitted), 'overlapping admission')
+        require(not overlaps(p, admitted), 'overlapping admission')
         admitted.add(p)
     policy = request['policy']
     closed(policy, ('schema', 'source', 'name', 'rules', 'limitations'))
@@ -126,14 +154,7 @@ def validate(request):
     for pattern in rules['deny']:
         text(pattern)
         require(not any(fnmatch.fnmatchcase(p, pattern) for p in admitted), 'denied file')
-    extractor = request['extractor']
-    closed(extractor, ('protocol', 'name', 'version', 'executable', 'script'))
-    require(extractor['protocol'] == 'python-json/v1' and extractor['name'] == NAME
-            and extractor['version'] == VERSION, 'wrong extractor family')
-    for key in ('executable', 'script'):
-        closed(extractor[key], ('path', 'sha256'))
-        path(extractor[key]['path'], absolute=True)
-        checksum(extractor[key]['sha256'])
+    validate_extractor(request['extractor'], 'python-json/v1')
     samples = request['samples']
     closed(samples, ('before', 'after_capture'))
     require(samples['before'] == samples['after_capture'], 'unstable samples')
@@ -143,6 +164,51 @@ def validate(request):
     require(sample['head'] == sample['head_after'] == source['head']
             and sample['cleanliness'] == 'clean' and sample['stable'] is True
             and sample['status_sha256'] == digest(b''), 'unqualified samples')
+    return admitted
+
+
+def patterns(value):
+    require(isinstance(value, list) and len(value) <= 128, 'invalid patterns')
+    for pattern in value:
+        text(pattern)
+    return value
+
+
+def validate_v2(request):
+    source, files = validate_common(
+        request, ('schema', 'manifest_sha256', 'source', 'input_basis', 'stage', 'files',
+                  'policy', 'extractor', 'limits'), REQUEST_V2)
+    require(request['input_basis'] == 'git_blob', 'unsupported input basis')
+    admitted, staged = set(), set()
+    for entry in files:
+        closed(entry, ('path', 'sha256', 'action', 'fragment'))
+        p = str(path(entry['path']))
+        checksum(entry['sha256'])
+        require(not overlaps(p, admitted), 'overlapping admission')
+        admitted.add(p)
+        if entry['action'] == 'extract':
+            require(entry['fragment'] is None, 'unexpected fragment')
+        else:
+            require(entry['action'] == 'reuse', 'invalid action')
+            closed(entry['fragment'], ('stage_path', 'sha256'))
+            q = str(path(entry['fragment']['stage_path']))
+            checksum(entry['fragment']['sha256'])
+            require(not overlaps(q, staged), 'overlapping fragment')
+            staged.add(q)
+    require(not any(overlaps(q, admitted) for q in staged), 'fragment overlaps admission')
+    policy = request['policy']
+    closed(policy, ('schema', 'source', 'name', 'rules', 'limitations'))
+    require(policy['schema'] == 'graphify-pack-policy/v1' and policy['source'] == source
+            and policy['name'] == 'incremental-admission' and policy['limitations'] == [],
+            'invalid policy identity')
+    # The admission policy object is owned by the driver; only include/deny are checked here.
+    rules = policy['rules']
+    require(isinstance(rules, dict), 'invalid admission policy')
+    include, deny = patterns(rules.get('include')), patterns(rules.get('deny'))
+    for p in admitted:
+        require(any(fnmatch.fnmatchcase(p, x) for x in include)
+                and not any(fnmatch.fnmatchcase(p, x) for x in deny), 'denied file')
+    validate_extractor(request['extractor'], 'python-json/v2')
     return admitted
 
 
@@ -187,63 +253,95 @@ def record_id(*parts):
     return 'structural-v1:' + digest(encoded(parts))
 
 
-class Records:
-    def __init__(self, byte_limit):
-        self.nodes, self.edges, self.unresolved, self.errors = [], {}, {}, []
-        self.byte_limit, self.bytes = byte_limit, 0
+def file_id(file):
+    return record_id(file, 'file', file)
 
-    def bound(self):
-        require(len(self.nodes) + len(self.edges) + len(self.unresolved) + len(self.errors)
-                <= MAX_RECORDS, 'record limit')
-        require(self.bytes <= self.byte_limit, 'output byte limit')
+
+def file_node(file):
+    return dict(id=file_id(file), type='file', label=text(file), source_file=file)
+
+
+def candidate(value):
+    # Only a valid relative path can equal an admitted path; others never resolve.
+    try:
+        return str(path(value))
+    except ValueError:
+        return None
+
+
+def resolve(file, reference, admitted):
+    """Return (kind, v1 dedup key, record) for one reference over the admitted set."""
+    found = [c for c in reference['candidates'] if c in admitted]
+    if len(found) == 1:
+        record = dict(source=file_id(file), target=file_id(found[0]),
+                      type=reference['kind'], source_file=file)
+        return 'edge', (file, record['source'], record['target'], record['type']), record
+    text(reference['target'])
+    record = dict(source_file=file, type=reference['kind'], target=reference['target'],
+                  line=reference['line'])
+    return 'unresolved', (file, record['type'], record['target'], record['line']), record
+
+
+class Extraction:
+    """File-local records of one file. Without an admitted set (v2), each distinct
+    reference is counted; with one (v1), the record it becomes is counted instead."""
+
+    def __init__(self, file, limits, admitted=None):
+        self.file, self.file_id, self.admitted = file, file_id(file), admitted
+        self.byte_limit, self.bytes = limits['output_bytes'], 0
+        self.nodes, self.edges, self.references, self.accounted = [], {}, {}, set()
 
     def account(self, record):
         self.bytes += len(encoded(record))
-        self.bound()
+        if len(self.nodes) + len(self.edges) + len(self.accounted) > MAX_RECORDS:
+            raise Limit('record limit')
+        if self.bytes > self.byte_limit:
+            raise Limit('output byte limit')
 
-    def node(self, file, kind, label, *location):
+    def node(self, kind, label, *location):
         text(label)
-        identity = record_id(file, kind, label, *location)
-        record = dict(id=identity, type=kind, label=label, source_file=file)
-        self.account(record)
+        identity = record_id(self.file, kind, label, *location)
+        record = dict(id=identity, type=kind, label=label, source_file=self.file)
         self.nodes.append(record)
-        self.bound()
+        self.account(record)
         return identity
 
-    def edge(self, file, source, target, kind):
-        key = file, source, target, kind
+    def edge(self, source, target, kind):
+        key = source, target, kind
         if key in self.edges:
             return
-        record = dict(source=source, target=target, type=kind, source_file=file)
+        record = self.edges[key] = dict(source=source, target=target, type=kind, source_file=self.file)
         self.account(record)
-        self.edges[key] = record
-        self.bound()
 
-    def unresolved_reference(self, file, kind, target, line):
-        text(target)
-        key = file, kind, target, line
-        if key in self.unresolved:
+    def reference(self, kind, target, line, candidates):
+        key = kind, target, line
+        if key in self.references:
             return
-        record = dict(source_file=file, type=kind, target=target, line=line)
-        self.account(record)
-        self.unresolved[key] = record
-        self.bound()
+        record = self.references[key] = dict(
+            kind=kind, target=target, line=line,
+            candidates=[c for c in map(candidate, candidates) if c is not None])
+        if self.admitted is not None:
+            _, key, record = resolve(self.file, record, self.admitted)
+        if key not in self.accounted:
+            self.accounted.add(key)
+            self.account(record)
 
 
-def python_structure(raw, file, files, records):
+def python_structure(raw, file, records):
     # ast.parse never imports or executes admitted source. Parser failure is coverage loss.
     tree = ast.parse(raw, filename=file)
-    pending = [(tree, files[file], '')]
+    pending = [(tree, records.file_id, '')]
     count = 0
     while pending:
         item, parent, scope = pending.pop()
         count += 1
-        require(count <= MAX_AST_NODES, 'AST node limit')
+        if count > MAX_AST_NODES:
+            raise Limit('AST node limit')
         if isinstance(item, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
             scope = scope + '.' + item.name if scope else item.name
             kind = 'class' if isinstance(item, ast.ClassDef) else 'function'
-            child = records.node(file, kind, scope, item.lineno, item.col_offset)
-            records.edge(file, parent, child, 'contains')
+            child = records.node(kind, scope, item.lineno, item.col_offset)
+            records.edge(parent, child, 'contains')
             parent = child
         if isinstance(item, (ast.Import, ast.ImportFrom)):
             modules = [a.name for a in item.names] if isinstance(item, ast.Import) else []
@@ -251,7 +349,7 @@ def python_structure(raw, file, files, records):
                 package = list(PurePosixPath(file).parts[:-1])
                 if item.level:
                     if item.level > len(package):
-                        records.unresolved_reference(file, 'imports', '.' * item.level + (item.module or ''), item.lineno)
+                        records.reference('imports', '.' * item.level + (item.module or ''), item.lineno, [])
                     else:
                         base = package[:len(package) - item.level + 1]
                         modules = ['.'.join(base + ([item.module] if item.module else []))]
@@ -259,18 +357,14 @@ def python_structure(raw, file, files, records):
                     modules = [item.module or '']
             for module in modules:
                 stem = module.replace('.', '/')
-                candidates = [p for p in (stem + '.py', stem + '/__init__.py') if p in files]
-                if len(candidates) == 1:
-                    records.edge(file, files[file], files[candidates[0]], 'imports')
-                else:
-                    records.unresolved_reference(file, 'imports', module, item.lineno)
+                records.reference('imports', module, item.lineno, [stem + '.py', stem + '/__init__.py'])
         pending.extend((child, parent, scope) for child in reversed(list(ast.iter_child_nodes(item))))
 
 
 INLINE_LINK = re.compile(r'(?<!!)\[[^\]\n]*\]\(([^\s()]+)\)')
 
 
-def markdown_structure(raw, file, files, records):
+def markdown_structure(raw, file, records):
     content = raw.decode('utf-8')
     fence = None
     for number, line in enumerate(content.splitlines(), 1):
@@ -302,60 +396,188 @@ def markdown_structure(raw, file, files, records):
                 elif part not in ('', '.'):
                     parts.append(part)
             normalized = '/'.join(parts)
-            if safe and normalized in files:
-                records.edge(file, files[file], files[normalized], 'links_to')
-            else:
-                records.unresolved_reference(file, 'links_to', link, number)
+            records.reference('links_to', link, number, [normalized] if safe else [])
+
+
+def document(file, raw, outcome, reason, records=None):
+    return dict(schema=FRAGMENT, family=dict(name=NAME, version=VERSION), path=file,
+                content_sha256=digest(raw), outcome=outcome, reason=reason, file_node=file_node(file),
+                nodes=sorted(records.nodes, key=lambda n: n['id']) if records else [],
+                edges=[records.edges[k] for k in sorted(records.edges)] if records else [],
+                references=[records.references[k] for k in sorted(records.references)] if records else [])
+
+
+def extract(file, raw, limits, admitted=None):
+    records = Extraction(file, limits, admitted)
+    try:
+        if file.endswith('.py'):
+            python_structure(raw, file, records)
+        elif file.endswith('.md'):
+            markdown_structure(raw, file, records)
+        else:
+            raise NotImplementedError('unsupported file type')
+    except (SyntaxError, RecursionError, UnicodeError, NotImplementedError) as exc:
+        # Failed files keep no local records; the reason is the concrete exception name.
+        return document(file, raw, 'unknown', type(exc).__name__)
+    return document(file, raw, 'structural', None, records)
+
+
+def fragment(file, raw, limits):
+    """Return the file-local v2 fragment; a per-file bound gives outcome unknown, reason limit."""
+    path(file)
+    try:
+        result = extract(file, raw, limits)
+        if len(encoded(result)) > limits['output_bytes']:
+            raise Limit('output byte limit')
+    except Limit:
+        return document(file, raw, 'unknown', 'limit')
+    return result
+
+
+def check_fragment(item, file, content_sha256):
+    closed(item, ('schema', 'family', 'path', 'content_sha256', 'outcome', 'reason',
+                  'file_node', 'nodes', 'edges', 'references'))
+    require(item['schema'] == FRAGMENT and item['family'] == dict(name=NAME, version=VERSION)
+            and item['path'] == file and item['content_sha256'] == content_sha256
+            and item['file_node'] == file_node(file), 'fragment identity mismatch')
+    nodes, edges, references = item['nodes'], item['edges'], item['references']
+    require(all(isinstance(x, list) for x in (nodes, edges, references))
+            and len(nodes) + len(edges) + len(references) <= MAX_RECORDS, 'invalid fragment records')
+    if item['outcome'] == 'unknown':
+        require(isinstance(item['reason'], str) and re.fullmatch('[A-Za-z][A-Za-z0-9_]{0,63}', item['reason'])
+                and not nodes and not edges and not references, 'invalid unknown fragment')
+        return
+    require(item['outcome'] == 'structural' and item['reason'] is None, 'invalid fragment outcome')
+    ids = {item['file_node']['id']}
+    for node in nodes:
+        closed(node, ('id', 'type', 'label', 'source_file'))
+        require(isinstance(node['id'], str) and re.fullmatch('structural-v1:[0-9a-f]{64}', node['id'])
+                and node['id'] not in ids and node['type'] in ('class', 'function')
+                and node['source_file'] == file, 'invalid fragment node')
+        text(node['label'])
+        ids.add(node['id'])
+    seen = set()
+    for edge in edges:
+        closed(edge, ('source', 'target', 'type', 'source_file'))
+        require(edge['type'] == 'contains' and edge['source_file'] == file and edge['source'] in ids
+                and edge['target'] in ids and (edge['source'], edge['target']) not in seen,
+                'invalid fragment edge')
+        seen.add((edge['source'], edge['target']))
+    seen = set()
+    for reference in references:
+        closed(reference, ('kind', 'target', 'line', 'candidates'))
+        require(reference['kind'] in ('imports', 'links_to') and isinstance(reference['target'], str)
+                and type(reference['line']) is int and reference['line'] >= 1
+                and isinstance(reference['candidates'], list) and len(reference['candidates']) <= 2
+                and all(candidate(c) == c for c in reference['candidates'])
+                and (reference['kind'], reference['target'], reference['line']) not in seen,
+                'invalid fragment reference')
+        seen.add((reference['kind'], reference['target'], reference['line']))
+
+
+def assemble(fragments, source, request_sha256, limits):
+    """Resolve every reference over the given admitted set; global bounds fail the run."""
+    admitted = set(fragments)
+    nodes, edges, unresolved, errors, coverage = [], {}, {}, [], {}
+    size = 0
+
+    def bound(record=None):
+        nonlocal size
+        size += len(encoded(record)) if record is not None else 0
+        require(len(nodes) + len(edges) + len(unresolved) + len(errors) <= MAX_RECORDS, 'record limit')
+        require(size <= limits['output_bytes'], 'output byte limit')
+
+    for file in sorted(admitted):
+        require(fragments[file]['path'] == file, 'fragment path mismatch')
+        nodes.append(file_node(file))
+        bound(nodes[-1])
+    for file in sorted(admitted):
+        item = fragments[file]
+        coverage[file] = item['outcome']
+        if item['outcome'] != 'structural':
+            errors.append(dict(source_file=file, reason=item['reason']))
+            bound()
+            continue
+        for node in item['nodes']:
+            nodes.append(node)
+            bound(node)
+        for edge in item['edges']:
+            key = file, edge['source'], edge['target'], edge['type']
+            if key not in edges:
+                edges[key] = edge
+                bound(edge)
+        for reference in item['references']:
+            kind, key, record = resolve(file, reference, admitted)
+            records = edges if kind == 'edge' else unresolved
+            if key not in records:
+                records[key] = record
+                bound(record)
+    common = dict(source=source, built_at_commit=source['head'],
+                  refresh_request_sha256=request_sha256, extractor_family=dict(name=NAME, version=VERSION))
+    graph = dict(common, directed=True, nodes=sorted(nodes, key=lambda n: n['id']),
+                 links=[edges[k] for k in sorted(edges)])
+    validation = dict(common, status='partial', semantic_coverage='none',
+                      covered_segments_by_file={p: [] for p in sorted(admitted)},
+                      structural_parser_errors=len(errors), parser_errors=errors,
+                      unresolved_references=[unresolved[k] for k in sorted(unresolved)],
+                      limitations=['Structural syntax only; no execution, type/call resolution or semantic enrichment.',
+                                   'Imports resolve exact admitted root-relative modules only; source roots are not inferred.',
+                                   'Markdown supports plain inline relative links, not full CommonMark.',
+                                   'Source identity and observations are caller supplied, not independently attested.'])
+    return graph, validation, coverage
+
+
+def respond_v1(raw, request):
+    admitted = validate(request)
+    limits = request['limits']
+    fragments, total = {}, 0
+    for entry in sorted(request['files'], key=lambda f: f['path']):
+        data = read_staged(request['stage'], entry, min(limits['file_bytes'], limits['input_bytes'] - total))
+        total += len(data)
+        require(total <= limits['input_bytes'], 'total input limit')
+        # v1 keeps per-file bounds fatal: Limit propagates and the whole request fails.
+        fragments[entry['path']] = extract(entry['path'], data, limits, admitted)
+    sha = digest(raw)
+    graph, validation, coverage = assemble(fragments, request['source'], sha, limits)
+    response = encoded(dict(schema='graphify-refresh-response/v1', request_sha256=sha,
+                            graph=graph, validation=validation, coverage=coverage))
+    require(len(response) <= limits['output_bytes'], 'output byte limit')
+    return response
+
+
+def respond_v2(raw, request):
+    validate_v2(request)
+    limits, stage = request['limits'], request['stage']
+    fragments, extracted, total = {}, {}, 0
+    for entry in sorted(request['files'], key=lambda f: f['path']):
+        file, remaining = entry['path'], limits['input_bytes'] - total
+        if entry['action'] == 'extract':
+            data = read_staged(stage, entry, min(limits['file_bytes'], remaining))
+            item = extracted[file] = fragment(file, data, limits)
+        else:
+            staged = dict(path=entry['fragment']['stage_path'], sha256=entry['fragment']['sha256'])
+            data = read_staged(stage, staged, min(limits['output_bytes'], remaining))
+            item = strict_json(data, 8 * MAX_RECORDS + 64)
+            check_fragment(item, file, entry['sha256'])
+        # input_bytes bounds every staged byte read: content and reused fragments.
+        total += len(data)
+        require(total <= limits['input_bytes'], 'total input limit')
+        fragments[file] = item
+    sha = digest(raw)
+    graph, validation, coverage = assemble(fragments, request['source'], sha, limits)
+    validation['limitations'].append(GIT_LIMITATION)
+    response = encoded(dict(schema='graphify-refresh-response/v2', request_sha256=sha, graph=graph,
+                            validation=validation, coverage=coverage, fragments=extracted))
+    require(len(response) <= limits['output_bytes'], 'output byte limit')
+    return response
 
 
 def respond(raw):
     require(len(raw) <= MAX_REQUEST, 'request byte limit')
     request = strict_json(raw)
-    admitted = validate(request)
-    limits = request['limits']
-    records, coverage = Records(limits['output_bytes']), {}
-    files = {p: records.node(p, 'file', p) for p in sorted(admitted)}
-    total = 0
-    for entry in sorted(request['files'], key=lambda f: f['path']):
-        data = read_staged(request['stage'], entry, min(limits['file_bytes'], limits['input_bytes'] - total))
-        total += len(data)
-        require(total <= limits['input_bytes'], 'total input limit')
-        file = entry['path']
-        local = Records(limits['output_bytes'] - records.bytes)
-        try:
-            if file.endswith('.py'):
-                python_structure(data, file, files, local)
-            elif file.endswith('.md'):
-                markdown_structure(data, file, files, local)
-            else:
-                raise NotImplementedError('unsupported file type')
-        except (SyntaxError, RecursionError, UnicodeError, NotImplementedError) as exc:
-            coverage[file] = 'unknown'
-            records.errors.append(dict(source_file=file, reason=type(exc).__name__))
-        else:
-            coverage[file] = 'structural'
-            records.bytes += local.bytes
-            records.nodes.extend(local.nodes)
-            records.edges.update(local.edges)
-            records.unresolved.update(local.unresolved)
-        records.bound()
-    sha = digest(raw)
-    common = dict(source=request['source'], built_at_commit=request['source']['head'],
-                  refresh_request_sha256=sha, extractor_family=dict(name=NAME, version=VERSION))
-    graph = dict(common, directed=True, nodes=sorted(records.nodes, key=lambda n: n['id']),
-                 links=[records.edges[k] for k in sorted(records.edges)])
-    validation = dict(common, status='partial', semantic_coverage='none',
-                      covered_segments_by_file={p: [] for p in sorted(admitted)},
-                      structural_parser_errors=len(records.errors), parser_errors=records.errors,
-                      unresolved_references=[records.unresolved[k] for k in sorted(records.unresolved)],
-                      limitations=['Structural syntax only; no execution, type/call resolution or semantic enrichment.',
-                                   'Imports resolve exact admitted root-relative modules only; source roots are not inferred.',
-                                   'Markdown supports plain inline relative links, not full CommonMark.',
-                                   'Source identity and observations are caller supplied, not independently attested.'])
-    response = encoded(dict(schema='graphify-refresh-response/v1', request_sha256=sha,
-                            graph=graph, validation=validation, coverage=coverage))
-    require(len(response) <= limits['output_bytes'], 'output byte limit')
-    return response
+    if isinstance(request, dict) and request.get('schema') == REQUEST_V2:
+        return respond_v2(raw, request)
+    return respond_v1(raw, request)
 
 
 def main():
