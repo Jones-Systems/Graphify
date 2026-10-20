@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
-"""Read one catalog-selected graph without extraction or persistent state."""
+"""Read one catalog-selected graph without extraction or persistent state.
+
+Catalog v1 entries are one whole-repository graph each. Catalog v2 adds an
+optional source.slice: a repository is then either one unsliced entry or one
+entry per slice, selected with --slice. Each slice graph is read alone with
+closed links. References into other slices are listed under
+validation_coverage.cross_slice_references and are not followed. An entry may
+carry slice={name, built_head[, equivalent_head]}; equivalent_head is the
+producer's slice-set claim, shown beside the built head and never assumed.
+"""
 import argparse
 from collections import deque
 from contextlib import contextmanager
@@ -14,10 +23,13 @@ import tarfile
 
 VERSION = '1.0'
 CATALOG_SCHEMA = 'private-graph-download-catalog/v1'
+CATALOG_SCHEMA_V2 = 'private-graph-download-catalog/v2'
 MAX_ARCHIVE = 2 * 1024**3
 MAX_MEMBER = 1024**3
 MAX_TOTAL = 8 * 1024**3
 MAX_METADATA = 16 * 1024**2
+MAX_LISTED_REFERENCES = 100
+HEAD_PATTERN = '[0-9a-f]{40}|[0-9a-f]{64}'
 
 class StoreError(ValueError):
     pass
@@ -38,6 +50,17 @@ def identity(source):
     require(isinstance(repo, str) and re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repo), 'invalid repository identity')
     require(isinstance(head, str) and re.fullmatch('[0-9a-f]{40}|[0-9a-f]{64}', head), 'invalid source head')
     return repo, head
+
+def slice_name(source):
+    """Return the optional slice of a source identity; absent means the whole repository."""
+    if 'slice' not in source:
+        return None
+    value = source['slice']
+    require(isinstance(value, str) and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,99}', value) is not None, 'invalid slice identity')
+    return value
+
+def entry_key(source):
+    return (*identity(source), slice_name(source))
 
 @contextmanager
 def open_nofollow(path):
@@ -68,19 +91,29 @@ def load_catalog(path, expected=None):
     sha = digest(raw)
     require(expected is None or sha == expected, 'catalog checksum mismatch')
     c = json.loads(raw)
-    require(isinstance(c, dict) and c.get('schema') == CATALOG_SCHEMA and c.get('status') == 'complete', 'unsupported or incomplete catalog')
+    require(isinstance(c, dict) and c.get('schema') in (CATALOG_SCHEMA, CATALOG_SCHEMA_V2) and c.get('status') == 'complete', 'unsupported or incomplete catalog')
     require(c.get('archive_directory') == 'archives', 'archive directory must be archives')
     require(isinstance(c.get('archives'), list), 'missing archive selections')
-    names, repos = set(), set()
+    names, keys, sliced = set(), set(), {}
     for e in c['archives']:
         require(isinstance(e, dict), 'invalid archive selection')
-        repo, _ = identity(e.get('source'))
+        repo, _, part = entry_key(e.get('source'))
+        # v1 readers ignore slice; a sliced entry under v1 would read as a whole repository.
+        require(part is None or c['schema'] == CATALOG_SCHEMA_V2, 'slice requires catalog v2')
+        require(sliced.setdefault(repo, part is not None) == (part is not None), 'repository mixes sliced and unsliced entries')
         name = e.get('archive')
         require(isinstance(name, str) and re.fullmatch(r'[A-Za-z0-9_.-]+\.tar\.gz', name), 'invalid archive filename')
-        require(repo not in repos and name not in names, 'duplicate catalog identity')
+        require((repo, part) not in keys and name not in names, 'duplicate catalog identity')
         require(valid_hash(e.get('sha256')), 'missing archive checksum')
         require(type(e.get('bytes')) is int and 0 < e['bytes'] <= MAX_ARCHIVE, 'invalid archive size')
-        repos.add(repo); names.add(name)
+        if 'slice' in e:
+            meta = e['slice']
+            require(part is not None and isinstance(meta, dict) and set(meta) in ({'name', 'built_head'}, {'name', 'built_head', 'equivalent_head'}), 'invalid slice metadata')
+            require(meta['name'] == part and meta['built_head'] == e['source']['head'], 'slice metadata contradicts source')
+            if 'equivalent_head' in meta:
+                require(isinstance(meta['equivalent_head'], str) and re.fullmatch(HEAD_PATTERN, meta['equivalent_head']) is not None, 'invalid equivalent head')
+        keys.add((repo, part)); names.add(name)
+    repos = set(sliced)
     empty = c.get('empty_repositories', [])
     require(isinstance(empty, list), 'invalid empty repositories')
     for e in empty:
@@ -122,7 +155,7 @@ def read_graph(catalog_path, entry):
     require(wanted == content.keys(), 'missing required graph members')
     manifest = json.loads(content['archive-manifest.json'])
     require(isinstance(manifest, dict) and manifest.get('schema') == 'portable-graph-archive/v1', 'invalid archive manifest')
-    require(identity(manifest.get('source')) == identity(entry['source']), 'archive source identity mismatch')
+    require(entry_key(manifest.get('source')) == entry_key(entry['source']), 'archive source identity mismatch')
     hashes = json.loads(content['enriched/hashes.json'])
     require(isinstance(hashes, dict) and isinstance(manifest.get('files'), dict), 'invalid hash manifests')
     for name in wanted - {'archive-manifest.json'}:
@@ -153,6 +186,10 @@ def read_graph(catalog_path, entry):
         'accepted_batches', 'expected_batches', 'missing_batches',
         'runtime_qualification', 'model_execution_evidence',
     ) if k in validation}
+    if 'cross_slice_references' in validation:
+        references = validation['cross_slice_references']
+        require(isinstance(references, list) and all(isinstance(r, dict) for r in references), 'malformed cross-slice references')
+        coverage['cross_slice_references'] = dict(count=len(references), references=references[:MAX_LISTED_REFERENCES], truncated=len(references) > MAX_LISTED_REFERENCES, followed=False)
     segments = validation.get('covered_segments_by_file')
     coverage['covered_files'] = len(segments) if isinstance(segments, dict) else None
     coverage['exclusions'] = validation.get('exclusions', 'not_reported')
@@ -174,7 +211,7 @@ def bounded_output(result, budget):
         result['hints'] = ['Metadata omitted to fit byte budget.']
         result['truncation_reason'] = 'byte_budget'
     if len(serialize(result)) + 1 > budget:
-        for key in ('repository', 'source_head', 'freshness', 'error'):
+        for key in ('repository', 'source_head', 'freshness', 'error', 'slice', 'built_head', 'equivalent_head'):
             if key in result:
                 result[key] = None
     return serialize(result).decode() + '\n'
@@ -190,7 +227,7 @@ def bounded_int(low, high):
 def parser():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--catalog', required=True); p.add_argument('--catalog-sha256')
-    p.add_argument('--repo'); p.add_argument('--source-head'); p.add_argument('--source-dirty', choices=('true','false','unknown'), default='unknown')
+    p.add_argument('--repo'); p.add_argument('--slice'); p.add_argument('--source-head'); p.add_argument('--source-dirty', choices=('true','false','unknown'), default='unknown')
     p.add_argument('--limit', type=bounded_int(1,1000), default=50)
     p.add_argument('--max-bytes', type=bounded_int(2048,1024**2), default=32768)
     p.add_argument('--max-explored', type=bounded_int(1,100000), default=10000)
@@ -206,16 +243,27 @@ def query(args):
     result = envelope()
     catalog, result['catalog_sha256'] = load_catalog(args.catalog, args.catalog_sha256)
     if args.command == 'list':
-        result['results'] = [dict(repository=e['source']['repository'],source_head=e['source']['head'],archive_sha256=e['sha256'],status='selected') for e in catalog['archives']] + catalog.get('empty_repositories', [])
+        result['results'] = [dict(repository=e['source']['repository'],source_head=e['source']['head'],archive_sha256=e['sha256'],status='selected',**({'slice':e['source']['slice']} if 'slice' in e['source'] else {})) for e in catalog['archives']] + catalog.get('empty_repositories', [])
     else:
         require(args.repo is not None, '--repo required for graph query')
-        matches = [e for e in catalog['archives'] if e['source']['repository'] == args.repo]
+        repository = [e for e in catalog['archives'] if e['source']['repository'] == args.repo]
+        slices = sorted(e['source']['slice'] for e in repository if 'slice' in e['source'])
+        require(args.slice is None or slices, 'repository is not sliced; omit --slice')
+        require(args.slice is not None or not slices, 'repository is sliced; select --slice from: ' + ','.join(slices)[:400])
+        matches = [e for e in repository if e['source'].get('slice') == args.slice]
         require(len(matches) == 1, 'repository has no selected graph')
         e=matches[0]; result.update(repository=args.repo, source_head=e['source']['head'],archive_sha256=e['sha256'])
+        if args.slice is not None:
+            meta = e.get('slice', {})
+            result.update(slice=args.slice, built_head=e['source']['head'], equivalent_head=meta.get('equivalent_head'))
+            result['hints'] = result['hints'] + ['Sliced graph: links stay within this slice; validation_coverage.cross_slice_references lists references into other slices, which are not followed.']
         graph, nodes, result['graph_sha256'], result['validation_coverage'] = read_graph(args.catalog,e)
         result['freshness'] = dict(status='unknown', caller_source_head=args.source_head, caller_dirty=args.source_dirty, comparison_basis='caller observation')
         if args.source_head:
             result['freshness']['status'] = 'head_mismatch' if args.source_head != result['source_head'] else ('head_matches_clean_reported' if args.source_dirty == 'false' else 'head_matches_dirty_reported' if args.source_dirty == 'true' else 'head_matches_cleanliness_unknown')
+            # Only a producer slice-set claim links a reused slice to a later head.
+            if result['freshness']['status'] == 'head_mismatch' and result.get('equivalent_head') == args.source_head:
+                result['freshness'].update(status='equivalent_' + ('head_matches_clean_reported' if args.source_dirty == 'false' else 'head_matches_dirty_reported' if args.source_dirty == 'true' else 'head_matches_cleanliness_unknown'), equivalence_basis='producer_slice_set_digest_claim')
         if args.command == 'search':
             text=args.text.casefold()
             for n in nodes.values():

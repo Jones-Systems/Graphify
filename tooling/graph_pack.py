@@ -3,7 +3,8 @@
 
 Each --NAME path requires --NAME-sha256 (graph, validation, inventory, policy,
 extractor, source). Source evidence is graphify-pack-source/v1 with exactly
-source={repository,head}, input_sha256={the other five names: SHA256},
+source={repository,head} or {repository,head,slice}, input_sha256={the other
+five names: SHA256},
 build_observation=null or {head,dirty:bool|null,stable:bool|null}, and limitations
 (a list of strings). Observations are caller reports, never live attestations.
 
@@ -15,6 +16,19 @@ executed admission logic. Extractor is graphify-pack-extractor/v1: source, name,
 version (string|null), artifact_sha256 (SHA256|null), limitations. These four
 schemas are closed. Graph and validation retain the existing consumer formats
 and exact bytes. Source evidence binds every selected input's exact bytes.
+
+A slice is one part of a multi-slice repository packed alone; every input must
+declare the same source, including its slice. A single-slice repository omits
+slice and packs exactly as before. Graph links stay closed within the slice. A
+reference into another slice is a validation.cross_slice_references record
+{source, source_file, type, target, line, target_path, target_id, target_slice}:
+source_file is admitted here, target_path is a safe path not admitted here,
+target_slice is another slice, and both ids are structural-v1 shaped. Records
+are sorted by (source_file, type, target, line, target_path) without duplicates.
+A slice holds at most MAX_SLICE_RECORDS nodes, links, hyperedges and cross-slice
+records combined. Targets in other slices are not verified here. Source-byte
+admission bounds belong upstream; the inventory carries no file sizes. A sliced
+package's catalog is catalog v2.
 
 No source files are opened from inventory entries. Admission, extraction, policy
 enforcement, and source observations must occur upstream. This command validates
@@ -40,14 +54,15 @@ import signal
 import stat
 import tarfile
 
-from graph_read import (CATALOG_SCHEMA, digest, identity, load_catalog,
-                        open_nofollow, read_graph, require, signature, valid_hash)
+from graph_read import (CATALOG_SCHEMA, CATALOG_SCHEMA_V2, digest, identity, load_catalog,
+                        open_nofollow, read_graph, require, signature, slice_name, valid_hash)
 
 NAMES = ('graph', 'validation', 'inventory', 'policy', 'extractor', 'source')
 MAX_INPUT = 16 * 1024**2
 MAX_GRAPH = 64 * 1024**2
 MAX_ARCHIVE = 160 * 1024**2
 MAX_RECORDS = 100000
+MAX_SLICE_RECORDS = 100000
 MAX_ITEMS = 1000000
 MAX_DEPTH = 48
 CANCEL_SIGNALS = {signal.SIGINT, signal.SIGTERM}
@@ -55,6 +70,23 @@ CANCEL_SIGNALS = {signal.SIGINT, signal.SIGTERM}
 
 class UnknownOutputError(ValueError):
     """A created output could not be safely removed; reconcile its exact path."""
+
+
+def link_refusal(info):
+    """Why a verified archive may not be shared by hard link, or None.
+
+    A link shares one inode with its source, so a write through either name
+    changes both. Only regular files of this user with no write bit qualify;
+    another user's file would also keep its blocks charged to that user. Nothing
+    is chmodded here. The owner can still add a write bit later.
+    """
+    if not stat.S_ISREG(info.st_mode):
+        return 'not_regular'
+    if info.st_uid != os.geteuid():
+        return 'foreign_owner'
+    if info.st_mode & 0o222:
+        return 'write_bits_present'
+    return None
 
 
 def encoded(value):
@@ -79,8 +111,10 @@ def limitations(value):
 
 
 def source_identity(value):
-    closed(value, ('repository', 'head'), 'source identity')
+    closed(value, ('repository', 'head', *(('slice',) if isinstance(value, dict) and 'slice' in value
+                                           else ())), 'source identity')
     identity(value)
+    slice_name(value)
     for part in value['repository'].split('/'):
         require(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,99}', part) is not None
                 and not part.endswith('.git'), 'noncanonical repository identity')
@@ -232,6 +266,10 @@ def validate_inputs(values, hashes):
                     and all(isinstance(n, str) and n in nodes for n in hyperedge['nodes']),
                     'invalid hyperedge endpoint')
         records.extend(collection)
+    sliced = 'slice' in selected
+    references = cross_slice_references(validation, selected, admitted)
+    if sliced:
+        require(len(records) + len(references) <= MAX_SLICE_RECORDS, 'slice record limit exceeded')
     unbound = 0
     for record in records:
         if 'source_file' in record:
@@ -249,13 +287,52 @@ def validate_inputs(values, hashes):
         missing.append('inventory.coverage')
     if unbound:
         missing.append('graph.record_source_files')
-    return dict(source=selected, provenance_status='caller_supplied_not_attested',
-                freshness='unknown', missing_provenance=sorted(missing),
-                build_observation=observation, inventory_coverage=coverage,
-                records_without_source_file=unbound,
-                coverage_meaning='Caller-reported file coverage; structural is not semantic enrichment',
-                limitations=['Policy admission and extraction were not executed or attested',
-                             'No source checkout or canonical target was observed'])
+    result = dict(source=selected, provenance_status='caller_supplied_not_attested',
+                  freshness='unknown', missing_provenance=sorted(missing),
+                  build_observation=observation, inventory_coverage=coverage,
+                  records_without_source_file=unbound,
+                  coverage_meaning='Caller-reported file coverage; structural is not semantic enrichment',
+                  limitations=['Policy admission and extraction were not executed or attested',
+                               'No source checkout or canonical target was observed'])
+    if sliced:
+        # Unsliced qualification stays byte-identical; only slices gain these fields.
+        result['cross_slice_references'] = dict(count=len(references),
+                                                target_verification='not_verified_in_package')
+        result['limitations'] = result['limitations'] + [
+            'One repository slice; cross-slice reference targets are not verified by this package']
+    return result
+
+
+def cross_slice_references(validation, selected, admitted):
+    """Validate validation.cross_slice_references for one slice; return the records."""
+    if 'cross_slice_references' not in validation:
+        return []
+    own = selected.get('slice')
+    require(own is not None, 'cross-slice references require a sliced source')
+    references = validation['cross_slice_references']
+    require(isinstance(references, list) and len(references) <= MAX_RECORDS,
+            'invalid cross-slice references')
+    previous = None
+    for record in references:
+        closed(record, ('source', 'source_file', 'type', 'target', 'line', 'target_path',
+                        'target_id', 'target_slice'), 'cross-slice reference')
+        require(file_path(record['source_file']) in admitted, 'cross-slice source file not admitted')
+        require(file_path(record['target_path']) not in admitted,
+                'cross-slice target is admitted in this slice')
+        require(slice_name(dict(slice=record['target_slice'])) != own,
+                'cross-slice target is this slice')
+        for key in ('source', 'target_id'):
+            require(isinstance(record[key], str)
+                    and re.fullmatch('structural-v1:[0-9a-f]{64}', record[key]) is not None,
+                    'invalid cross-slice reference id')
+        bounded_text(record['type'], 'cross-slice reference type')
+        bounded_text(record['target'], 'cross-slice reference target')
+        require(type(record['line']) is int and record['line'] >= 1, 'invalid cross-slice reference line')
+        key = (record['source_file'], record['type'], record['target'], record['line'],
+               record['target_path'])
+        require(previous is None or previous < key, 'cross-slice references unsorted or duplicated')
+        previous = key
+    return references
 
 
 @contextmanager
@@ -327,6 +404,25 @@ class OwnedOutput:
                 raise
         with os.fdopen(fd, 'wb') as handle:
             yield handle
+
+    def link(self, parent, name, source_parent, source_name, expected):
+        """Hard-link one verified file as a create-only owned entry.
+
+        expected is the (st_dev, st_ino) the caller verified through an open
+        descriptor. A name swapped before linking yields another inode; that link
+        is removed and the caller falls back or fails.
+        """
+        mask = signal.pthread_sigmask(signal.SIG_BLOCK, CANCEL_SIGNALS)
+        try:
+            os.link(source_name, name, src_dir_fd=source_parent, dst_dir_fd=parent,
+                    follow_symlinks=False)
+            created = os.stat(name, dir_fd=parent, follow_symlinks=False)
+            if inode(created) != expected or not stat.S_ISREG(created.st_mode):
+                os.unlink(name, dir_fd=parent)
+                raise ValueError('linked archive identity changed')
+            self.files.append((parent, name, expected))
+        finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, mask)
 
     def verify_ownership(self):
         # Inspect the complete closure before unlinking anything. Unexpected
@@ -400,8 +496,9 @@ def pack(inputs, destination):
     archive_name = archive_sha + '.tar.gz'
     entry = dict(source=evidence['source'], archive=archive_name,
                  sha256=archive_sha, bytes=len(archive))
-    catalog = encoded(dict(schema=CATALOG_SCHEMA, status='complete',
-                           archive_directory='archives', archives=[entry], empty_repositories=[]))
+    catalog = encoded(dict(schema=CATALOG_SCHEMA_V2 if 'slice' in evidence['source'] else CATALOG_SCHEMA,
+                           status='complete', archive_directory='archives', archives=[entry],
+                           empty_repositories=[]))
     package = encoded(dict(schema='graphify-pack-package/v1', source=evidence['source'],
                            input_sha256=hashes, catalog_sha256=digest(catalog), archive=entry,
                            graph_sha256=hashes['graph'], validation_sha256=hashes['validation'],

@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Observe one explicit checkout against a validated portable graph snapshot."""
+"""Observe one explicit checkout against a validated portable graph snapshot.
+
+Freshness is whole-repository only. A repository whose catalog entries are
+slices is refused: one slice graph is not the repository's graph.
+"""
 import argparse
 from datetime import datetime, timezone
 import hashlib
@@ -149,6 +153,8 @@ def observe(catalog_path, catalog_sha256, repository, source_root, target_oid=No
         try:
             catalog, result['catalog_sha256'] = reader.load_catalog(catalog_path, catalog_sha256)
             entries = [entry for entry in catalog['archives'] if entry['source']['repository'] == repository]
+            reader.require(not any('slice' in entry['source'] for entry in entries),
+                           'repository is sliced; whole-repository freshness is not observed')
             reader.require(len(entries) == 1, 'repository has no selected graph')
             entry = entries[0]
             result.update(snapshot_head=entry['source']['head'], archive_sha256=entry['sha256'])
