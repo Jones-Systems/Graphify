@@ -438,3 +438,107 @@ findings have separate refresh-source corrections and synthetic regression
 coverage. Formal finding closure requires affected independent review of the
 selected correction revision; this adapter alone does not qualify those
 guarantees or an installed runtime.
+
+## Incremental Git-Object Refresh
+
+`tooling/graph_refresh_incremental.py --manifest /EXACT/manifest.json
+--manifest-sha256 SHA` builds one create-only structural candidate for one
+repository from Git objects in a producer-owned bare mirror. Invoke it with
+`python3 -B` (it also adds its own directory under `python3 -I`). It is additive: `graph_refresh.py`, its v1 manifest, the v1
+adapter request and the reader, pull and pack formats are unchanged.
+
+The digest-bound, closed `graphify-incremental-manifest/v1` has exactly
+`schema`, `repository`, `mirror_git_dir`, `commit`, `target`,
+`admission_policy`, `extractor`, `runtime_probe`, `state_root`,
+`previous_state`, `destination`, `lock`, `cache_quota_bytes` and `limits`:
+
+- `mirror_git_dir` is an absolute bare repository; `commit` is a full OID in
+  its object format. Nothing is fetched or checked out.
+- `target={oid,observed_at,method}` is caller-supplied and may be all null.
+  The result reports `target_relation.relation` as `current` (target equals
+  commit), `behind` (commit is an ancestor of a target present in the mirror)
+  or `unknown`. It is never canonical latest-source evidence.
+- `admission_policy` is `graphify-admission-policy/v1` with `include` (1–128)
+  and `deny` (0–128) printable-ASCII `fnmatchcase` globs, `max_files` (at most
+  256), `max_file_bytes` (at most 4 MiB) and `max_total_bytes` (at most 16 MiB).
+  Its digest is the SHA256 of sorted-key compact ASCII JSON without a newline.
+- `extractor` must be protocol `python-json/v2`, name
+  `graphify-stdlib-structural`, version `1`, with exact executable and script
+  `{path,sha256}`. Other protocols or families are deferred, not modeled.
+- `runtime_probe` must select this release's own `tooling/runtime_identity.py`.
+- `state_root` is an existing directory reached without symlinks; the fragment
+  cache is `<state_root>/fragment-cache` (created 0700 if absent; the cache
+  requires an owner-only root). `previous_state` is
+  null or `{path,sha256}` of an earlier `build-state.json`. `destination` is a
+  new absolute path, which may sit below `state_root` but never overlaps the
+  cache, mirror, lock, adapter, probe or previous build. `lock` is an existing
+  stable file. `limits` has the `graph_refresh.py` fields and bounds.
+
+Admission walks `ls-tree -r` of the commit. Denies win; then includes select.
+Selected symlinks, gitlinks, other modes, unsafe or undecodable paths and blobs
+over the file cap are recorded as unsupported rather than read. `check-attr
+--source <commit>` then marks `filter`, `eol=crlf`, `working-tree-encoding` and
+`ident` paths unsupported. Git runs with no system/global config or attributes,
+`core.autocrlf=false` and `core.eol=lf`, so `text` and `text=auto` paths are
+admitted with blob bytes. Mirror-local `info/attributes` still applies. File
+count and total byte caps fail the run. Blobs are read with `cat-file --batch`
+and verified against their object IDs.
+
+Fragments are cached by `graphify-fragment-key/v1`: fragment schema, family,
+adapter SHA256, runtime identity, a per-file policy digest (input basis and
+`output_bytes`), path and content SHA256. Commit identity is not part of a key.
+A previous build state supplies trusted blob-to-SHA256 digests; content read
+for a cache miss must match that digest or the run fails. Every run sends all
+current admitted files (reuse or extract) to one adapter run, which resolves
+cross-file references over the whole admitted set, then packs once.
+
+Cache fallbacks keep the run going and are reported in `cache_status`:
+`cache_disabled:runtime_unidentified` when the runtime probe cannot identify
+the runtime, `cache_unavailable: ...` for an unusable cache root, `full` at the
+quota, `disabled` from the cache scan bound, `degraded` for corrupt, unreadable
+or conflicting entries, and `reuse_rejected` when the adapter rejects a reused
+fragment. That last case retries once with every file extracted and stores
+nothing. Corrupt and foreign cache entries are preserved; there is no eviction.
+
+The same commit, tree, admission policy, adapter, executable, per-file policy,
+identified runtime and admitted/unsupported set as `previous_state`, with its
+sibling `candidate/` package verified, returns `unchanged`. It creates no
+output and does not run the adapter; the runtime probe still runs. A changed
+commit with the same admitted set reuses every fragment and still repacks.
+
+A completed destination holds `attempts/<n>/` (staged inputs, `request.json`,
+`adapter-response.json`), `evidence/` (the six pack inputs), `candidate/`
+(unchanged `graph_pack.pack` output) and `build-state.json`
+(`graphify-build-state/v1`: identities, per-file `{path, blob_oid, sha256,
+bytes, coverage, key_sha256}`, unsupported entries, package digests, `counts`,
+`cache_status` and `target_relation`). Source evidence has
+`build_observation=null`, so `build_observation` remains in
+`missing_provenance`; validation adds `Git-object input; checkout cleanliness
+not observed.`
+
+Stdout is one bounded `graphify-incremental-result/v1` receipt. It carries
+`status`, `reason`, `package` and `build_state` selections (`{path,sha256}`),
+`counts` (`admitted`, `added`, `modified`, `deleted`, `reused`, `extracted`,
+`unsupported`, `cache_hits`, `cache_misses`, `cache_corrupt`, `cache_full`),
+`cache_status`, `runtime_identity`, `target_relation` and `attempts`. A rename
+counts as one deletion and one addition. Exit 0 means `completed` or
+`unchanged`, 2 `deferred` (lock contention, destination collision, unavailable
+mirror or extractor, cancellation) and 1 `failed` or `unknown`. The lock,
+retained-transaction and foreign-candidate checks are the sampled
+cooperating-writer semantics of `graph_refresh.py`; a lost lock or unexpected
+transaction entry is `unknown` and retained. The adapter remains trusted code,
+not a sandbox, and this family makes no legacy semantic-replacement claim.
+
+### Catalog assembly
+
+`tooling/graph_catalog.py --package PATH SHA256 [...] --destination NEW_ABS`
+(invoke with `python3 -B`; like the other existing helpers it cannot import
+its siblings under `python3 -I`) assembles 1–128 selected
+`graphify-pack-package/v1` packages, one per repository, into a new
+`private-graph-download-catalog/v1` with copied, re-verified archives. An
+incremental candidate's `candidate/package.json` and its receipt SHA256 are
+direct inputs. `assembly.json` (`graphify-catalog-assembly/v1`) records each
+selected package's identities and qualification; the reader and `graph_pull`
+ignore it. Exit 0 is success, 1 an error (effect `not_completed` or `unknown`)
+and 2 a usage error. Assembly validates consistency, not provenance or
+freshness.
