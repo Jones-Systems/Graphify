@@ -473,3 +473,61 @@ transaction handling, and reader, pull and catalog interoperability. They are
 not a real-repository pilot, installed-release qualification, measurement of
 time or memory, scheduler activation, server synchronization or promotion.
 Each of those needs its own authorization, binding and readback.
+
+## Portable Release Closure V2
+
+`tooling/install_portable.py` selects one closure per command with
+`--closure v1|v2`; omitting it selects `v1`. Closure `v1` is the
+`graphify-portable-release/v1` five-helper release described in
+[native portable source installation](#native-portable-source-installation),
+and its manifest shape is unchanged. Closure `v2` is the closed
+`graphify-portable-release/v2` release with exactly ten helpers, in manifest
+order: `graph_freshness.py`, `graph_pack.py`, `graph_pull.py`, `graph_read.py`,
+`graph_refresh.py`, `graph_catalog.py`, `graph_refresh_incremental.py`,
+`fragment_cache.py`, `runtime_identity.py` and `refresh_adapter_structural.py`,
+all under `tooling/`. The installer itself is recorded as provenance but is
+not installed.
+
+Pass the same closure to every command for one release:
+
+```bash
+python3 -B /SOURCE/tooling/install_portable.py prepare --closure v2 \
+  --source /SOURCE --revision FULL_COMMIT --destination /RELEASE_PARENT
+python3 -B /SOURCE/tooling/install_portable.py install --closure v2 \
+  --source /SOURCE --revision FULL_COMMIT --destination /RELEASE_PARENT \
+  --manifest-sha256 PREPARED_MANIFEST_SHA256
+python3 -B /SOURCE/tooling/install_portable.py verify --closure v2 \
+  --release /RELEASE_PARENT/PREPARED_MANIFEST_SHA256 \
+  --manifest-sha256 PREPARED_MANIFEST_SHA256
+```
+
+Source selection, origin and installer-provenance checks, limits, modes,
+create-only publication and cleanup are the same as for `v1`. Each of the ten
+records binds a path to the committed blob OID, SHA256, byte count and source
+mode at the selected commit. Prepare fails with
+`missing_or_nonregular_source_blob` if any of the ten is absent or not a
+regular blob, and with `source_blob_limit` if any exceeds 1 MiB. The manifest
+records the commit, not a tree OID. Because `revision` is part of the
+manifest, the release identity differs for every commit. Compute the
+installable digest with `prepare --closure v2` at the exact commit to be
+installed, not at a pull-request head that will not be installed.
+
+The release contains exactly `release.json` and the ten `tooling/` files.
+Verification requires the manifest schema to match the selected closure.
+Verifying a `v2` release without `--closure v2`, or a `v1` release with
+`--closure v2`, fails with `release_closure_mismatch`. Install with one
+closure's digest under the other closure fails with `manifest_digest_mismatch`
+before writing anything.
+
+Existing `v1` releases remain valid and are verified as before with `verify`
+alone or with `--closure v1`. Installing a `v2` release creates a new sibling
+named by its own digest. It neither changes nor removes any `v1` release, and
+there is still no `current` pointer. Select a release by explicit path; rollback
+selects a different retained, verified release path. A `v2` release provides
+the [incremental build](#incremental-structural-builds-from-a-bare-mirror)
+helpers in one `tooling/` directory, so its own `runtime_identity.py` can be the
+manifest's `runtime_probe`. The installer source tests use synthetic helper
+bytes. Qualifying a real `v2` release on a host still needs its own exact
+commit, prepare/install/verify readback, and authorized operation binding.
+Installing the closure does not schedule refreshes, bind agents or promote
+graphs, and makes no semantic-replacement claim for the legacy extractor.

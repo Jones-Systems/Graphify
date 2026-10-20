@@ -542,3 +542,25 @@ selected package's identities and qualification; the reader and `graph_pull`
 ignore it. Exit 0 is success, 1 an error (effect `not_completed` or `unknown`)
 and 2 a usage error. Assembly validates consistency, not provenance or
 freshness.
+
+## Portable Release Closure V2
+
+`tooling/install_portable.py --closure v2` prepares, installs and verifies a
+closed `graphify-portable-release/v2` release. It contains the five existing
+helpers plus `graph_catalog.py`, `graph_refresh_incremental.py`,
+`fragment_cache.py`, `runtime_identity.py` and `refresh_adapter_structural.py`.
+Without `--closure`, every command keeps the five-helper `v1` behavior, so
+existing `v1` releases and their digests remain valid. See
+[the v2 closure procedure](RUNBOOK.md#portable-release-closure-v2) for commands
+and failure codes.
+
+The manifest binds repository, commit, each helper's committed blob identity
+and the installer's provenance. Verification rejects a release whose schema
+does not match the selected closure. A `v2` release is a new digest-named
+sibling release with no `current` pointer. It does not modify `v1` releases and
+does not adopt the helpers into automatic agent discovery, refresh schedules
+or assistant call paths. It lets the
+[incremental refresh](#incremental-git-object-refresh) use the same release's
+`tooling/runtime_identity.py` as its `runtime_probe`. This does not qualify a
+production extractor or a host installation, and it makes no legacy
+semantic-replacement claim.
