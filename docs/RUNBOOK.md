@@ -531,3 +531,125 @@ bytes. Qualifying a real `v2` release on a host still needs its own exact
 commit, prepare/install/verify readback, and authorized operation binding.
 Installing the closure does not schedule refreshes, bind agents or promote
 graphs, and makes no semantic-replacement claim for the legacy extractor.
+
+## Semantic Batch Planning And Approval
+
+`tooling/semantic_batch.py` plans one semantic batch and verifies an owner
+approval record against it. It has no executor and makes no model, provider,
+network or credential call. A plan or a verified approval authorizes nothing,
+and the tool runs nothing. A semantic executor, its model or provider, and its
+credential remain separate owner decisions.
+
+Plan from explicitly named, SHA256-bound inputs. Name each current structural
+`build-state.json` (`graphify-build-state/v1`, at most one per repository). Name
+a semantic baseline (`graphify-semantic-baseline/v1`) or pass `--baseline-none`.
+A rate card (`graphify-semantic-rate-card/v1`) is optional:
+
+```bash
+python3 -I -B /RELEASE/tooling/semantic_batch.py plan \
+  --build-state /STATE_ROOT/RUN/build-state.json BUILD_STATE_SHA256 \
+  --baseline /SEMANTIC_ROOT/baseline.json BASELINE_SHA256 \
+  --model-id MODEL_ID --max-output-tokens-per-file 800 \
+  --input-overhead-percent 120 --requested-ceiling 2000000 \
+  --valid-hours 24 --output /SEMANTIC_ROOT/plans/PLAN_NAME.json
+```
+
+The plan compares each build state's admitted files with the baseline by
+content SHA256. For each repository it reports the revision range (baseline
+commit to build-state commit) and new, changed, deleted and unchanged counts.
+It lists at most 50 paths per category and records how many were omitted. It
+also reports input bytes and estimated tokens. `catch_up` is `initial` without
+a baseline, `none` at the baseline commit, and otherwise `included`. The
+comparison always runs from the baseline, so it includes changes from earlier
+deferred batches. A baseline written for a different model is refused. Plan
+with `--baseline-none` to estimate a full batch.
+
+Each new or changed file is estimated at
+`ceil(ceil(bytes / 4) * input_overhead_percent / 100)` input tokens plus the
+fixed `--max-output-tokens-per-file`. These are heuristic estimates, not
+tokenizer counts or billing quotes. Cost is reported only when a hashed rate
+card for the same model is supplied, and it is still an estimate. If the
+estimated total exceeds `--requested-ceiling`, the plan is refused and nothing
+is written. The output path must not exist; it is created with mode 0600 and
+never replaced. Previous semantic outputs are not read beyond the named
+baseline and are not written.
+
+Approval is a separate owner act. The owner approves an exact plan SHA256. The
+coordinator then records `graphify-semantic-approval/v1` with `plan_sha256`, the
+plan's `build_states` (`repository` and `sha256`), `approved_by`,
+`approval_source` (the exact owner message reference), `token_ceiling`,
+`approved_at` and `expires_at`. This tool never creates approval records. Verify
+the record before any future execution:
+
+```bash
+python3 -I -B /RELEASE/tooling/semantic_batch.py verify \
+  --build-state /STATE_ROOT/RUN/build-state.json BUILD_STATE_SHA256 \
+  --baseline /SEMANTIC_ROOT/baseline.json BASELINE_SHA256 \
+  --plan /SEMANTIC_ROOT/plans/PLAN_NAME.json PLAN_SHA256 \
+  --approval /SEMANTIC_ROOT/approvals/APPROVAL_NAME.json APPROVAL_SHA256 \
+  --approver 'OWNER NAME'
+```
+
+Pass the same rate card to `verify` if the plan used one. Verification writes
+nothing. It recomputes the plan from the current inputs, so a changed build
+state, baseline or rate card refuses it as stale, as does a hand-edited plan.
+It refuses when the plan or approval has expired, or when `approved_at` falls
+before plan creation or after the check. It also refuses a mismatched plan
+SHA256, build-state set or approver. The required ceiling order is: estimated
+total tokens <= approved `token_ceiling` <= requested ceiling. Exit status is 0
+only for `planned` or `verified`; `refused` and `failed` exit 1.
+
+The verifier can check only that `approval_source` is present. It cannot prove
+that the referenced owner message exists. There are no automatic retries. A
+failed or partial batch is reported and waits for a new plan and approval.
+
+## Repository Slices And Catalog V2
+
+A repository may be packed as several slices. Each slice's sources declare
+`source.slice`; a single-slice repository omits it and packs exactly as before.
+A slice graph keeps closed links: every link joins nodes of that slice. A
+reference into another slice is recorded in the slice's validation as a
+`cross_slice_references` entry `{source, source_file, type, target, line,
+target_path, target_id, target_slice}`. `graph_pack.py` refuses an entry whose
+`source_file` is not admitted in the slice, whose `target_path` is unsafe or
+admitted in the same slice, whose `target_slice` is its own slice, or whose ids
+are not `structural-v1:` followed by 64 lowercase hex characters. Entries must
+be sorted by `(source_file, type, target, line, target_path)` without
+duplicates. A slice holds at most 100,000 nodes, links, hyperedges and
+cross-slice entries combined. Targets in other slices are not verified.
+
+Catalog identity is `(repository, slice)`. `graph_catalog.py` writes
+`private-graph-download-catalog/v1`, byte-identical to earlier output, unless an
+entry has a slice; then it writes `private-graph-download-catalog/v2`.
+Readers from earlier releases refuse v2 catalogs instead of reading one slice
+as the whole repository. Deliver v2 catalogs only to consumers whose release
+reads slices. A repository is never both sliced and unsliced in one catalog,
+and at most 128 packages are selected per catalog; excess selections are
+refused.
+
+Query a sliced repository with `graph_read.py --repo OWNER/NAME --slice NAME`.
+Without `--slice` the reader refuses and lists the slices. `list` shows each
+entry's slice. Results add `slice`, `built_head` and `equivalent_head`.
+`validation_coverage.cross_slice_references` gives the count and at most 100
+entries; they are not followed. `graph_freshness.py` refuses sliced
+repositories: one slice is not whole-repository freshness. `graph_pull.py
+--repo` selects every slice of that repository and still copies archives.
+
+`graph_catalog.py --slice-set PATH SHA256` binds a producer
+`graphify-slice-set/v1` record `{schema, repository, accepted_head, tree,
+slices: [{name, package_sha256, built_head, input_digest, resolution_digest,
+build_state_sha256}]}`. `tree` must be a full Git object id with the same
+length as `accepted_head`, and every digest a SHA256. Its slices must be
+exactly the repository's selected slice packages. Each entry
+then gains `slice: {name, built_head, equivalent_head}`, and `assembly.json`
+keeps the record. The reader reports `equivalent_head_matches_*` freshness only
+when the caller's head equals that producer claim. Without a slice set,
+`equivalent_head` is null and no equivalence is used.
+
+`graph_catalog.py --link-existing` is off by default. It hard-links a verified
+package archive only when it is on the same filesystem, is a regular file of
+the invoking user, and has no write bit; otherwise it copies and reports the
+reason. Pack writes archives with mode 0600, so they are copied unless their
+owner has removed the write bits. Links save physical disk only. Quota
+accounting counts every path, so links give no quota relief. Consumer stores
+are not linked.
