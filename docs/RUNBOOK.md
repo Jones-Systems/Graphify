@@ -436,3 +436,40 @@ Qualify the selected installed revision and its lock/transaction assumptions
 before any real invocation. Source checks do not establish operational acceptance.
 Do not use successful synthetic adapter tests as acceptance of those paths,
 real graph freshness, server synchronization or a legacy replacement.
+
+## Incremental Structural Builds From A Bare Mirror
+
+These source helpers are not yet in an installed portable release closure;
+the fixed five-helper release does not contain them. Use an exact checkout or
+a later separately installed release that includes `graph_refresh_incremental.py`,
+`fragment_cache.py`, `runtime_identity.py`, `refresh_adapter_structural.py` and
+`graph_catalog.py` in one `tooling/` directory.
+
+1. Prepare a producer-owned bare mirror holding the selected commit, an
+   existing stable lock file, an owner-only `state_root`, and a new destination
+   parent. This helper neither fetches nor creates the mirror.
+2. Write a `graphify-incremental-manifest/v1` per the
+   [incremental contract](AGENT-ACCESS.md#incremental-git-object-refresh), with
+   `extractor.protocol` `python-json/v2`, the exact adapter and interpreter
+   hashes, and `runtime_probe` set to the same release's
+   `tooling/runtime_identity.py`. Use `previous_state: null` for a cold build.
+3. Run `python3 -B /RELEASE/tooling/graph_refresh_incremental.py --manifest
+   /EXACT/manifest.json --manifest-sha256 SHA`. Record the receipt.
+4. For the next run, pass the receipt's `build_state` selection as
+   `previous_state` and a new destination. `unchanged` creates nothing and
+   selects the previous package.
+5. Assemble a catalog with `python3 -B /RELEASE/tooling/graph_catalog.py
+   --package CANDIDATE/package.json SHA256 --destination /NEW/catalog`.
+
+Treat `deferred` as retryable only after its cause is resolved; treat
+`unknown` as a hold that needs reconciliation of the retained destination and
+lock. Retained destinations, cache entries and candidates are never deleted by
+these helpers. Their removal needs separate creator-owned cleanup authority.
+
+Checks so far are synthetic: owned work repositories pushed into owned bare
+mirrors, with the real structural adapter and runtime probe. They cover cold
+and incremental equality, counters, cache fallbacks, Git attributes, lock and
+transaction handling, and reader, pull and catalog interoperability. They are
+not a real-repository pilot, installed-release qualification, measurement of
+time or memory, scheduler activation, server synchronization or promotion.
+Each of those needs its own authorization, binding and readback.
