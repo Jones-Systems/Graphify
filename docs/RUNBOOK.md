@@ -531,3 +531,74 @@ bytes. Qualifying a real `v2` release on a host still needs its own exact
 commit, prepare/install/verify readback, and authorized operation binding.
 Installing the closure does not schedule refreshes, bind agents or promote
 graphs, and makes no semantic-replacement claim for the legacy extractor.
+
+## Semantic Batch Planning And Approval
+
+`tooling/semantic_batch.py` plans one semantic batch and verifies an owner
+approval record against it. It has no executor and makes no model, provider,
+network or credential call. A plan or a verified approval authorizes nothing,
+and the tool runs nothing. A semantic executor, its model or provider, and its
+credential remain separate owner decisions.
+
+Plan from explicitly named, SHA256-bound inputs. Name each current structural
+`build-state.json` (`graphify-build-state/v1`, at most one per repository). Name
+a semantic baseline (`graphify-semantic-baseline/v1`) or pass `--baseline-none`.
+A rate card (`graphify-semantic-rate-card/v1`) is optional:
+
+```bash
+python3 -I -B /RELEASE/tooling/semantic_batch.py plan \
+  --build-state /STATE_ROOT/RUN/build-state.json BUILD_STATE_SHA256 \
+  --baseline /SEMANTIC_ROOT/baseline.json BASELINE_SHA256 \
+  --model-id MODEL_ID --max-output-tokens-per-file 800 \
+  --input-overhead-percent 120 --requested-ceiling 2000000 \
+  --valid-hours 24 --output /SEMANTIC_ROOT/plans/PLAN_NAME.json
+```
+
+The plan compares each build state's admitted files with the baseline by
+content SHA256. For each repository it reports the revision range (baseline
+commit to build-state commit) and new, changed, deleted and unchanged counts.
+It lists at most 50 paths per category and records how many were omitted. It
+also reports input bytes and estimated tokens. `catch_up` is `initial` without
+a baseline, `none` at the baseline commit, and otherwise `included`. The
+comparison always runs from the baseline, so it includes changes from earlier
+deferred batches. A baseline written for a different model is refused. Plan
+with `--baseline-none` to estimate a full batch.
+
+Each new or changed file is estimated at
+`ceil(ceil(bytes / 4) * input_overhead_percent / 100)` input tokens plus the
+fixed `--max-output-tokens-per-file`. These are heuristic estimates, not
+tokenizer counts or billing quotes. Cost is reported only when a hashed rate
+card for the same model is supplied, and it is still an estimate. If the
+estimated total exceeds `--requested-ceiling`, the plan is refused and nothing
+is written. The output path must not exist; it is created with mode 0600 and
+never replaced. Previous semantic outputs are not read beyond the named
+baseline and are not written.
+
+Approval is a separate owner act. The owner approves an exact plan SHA256. The
+coordinator then records `graphify-semantic-approval/v1` with `plan_sha256`, the
+plan's `build_states` (`repository` and `sha256`), `approved_by`,
+`approval_source` (the exact owner message reference), `token_ceiling`,
+`approved_at` and `expires_at`. This tool never creates approval records. Verify
+the record before any future execution:
+
+```bash
+python3 -I -B /RELEASE/tooling/semantic_batch.py verify \
+  --build-state /STATE_ROOT/RUN/build-state.json BUILD_STATE_SHA256 \
+  --baseline /SEMANTIC_ROOT/baseline.json BASELINE_SHA256 \
+  --plan /SEMANTIC_ROOT/plans/PLAN_NAME.json PLAN_SHA256 \
+  --approval /SEMANTIC_ROOT/approvals/APPROVAL_NAME.json APPROVAL_SHA256 \
+  --approver 'OWNER NAME'
+```
+
+Pass the same rate card to `verify` if the plan used one. Verification writes
+nothing. It recomputes the plan from the current inputs, so a changed build
+state, baseline or rate card refuses it as stale, as does a hand-edited plan.
+It refuses when the plan or approval has expired, or when `approved_at` falls
+before plan creation or after the check. It also refuses a mismatched plan
+SHA256, build-state set or approver. The required ceiling order is: estimated
+total tokens <= approved `token_ceiling` <= requested ceiling. Exit status is 0
+only for `planned` or `verified`; `refused` and `failed` exit 1.
+
+The verifier can check only that `approval_source` is present. It cannot prove
+that the referenced owner message exists. There are no automatic retries. A
+failed or partial batch is reported and waits for a new plan and approval.
