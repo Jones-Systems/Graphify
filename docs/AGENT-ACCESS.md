@@ -564,3 +564,19 @@ or assistant call paths. It lets the
 `tooling/runtime_identity.py` as its `runtime_probe`. This does not qualify a
 production extractor or a host installation, and it makes no legacy
 semantic-replacement claim.
+
+## Portable Release Closure V3
+
+`tooling/install_portable.py --closure v3` prepares, installs and verifies a
+closed `graphify-portable-release/v3` release. It contains the ten `v2` helpers
+plus `structural_languages.py`, which the structural adapter needs beside it
+for family 2, and `semantic_batch.py`, which also uses the shipped
+`graph_pack.py` and `graph_read.py`. The `v1` default and `v2` releases are
+unchanged and still verify only under their own closure. See
+[the v3 closure procedure](RUNBOOK.md#portable-release-closure-v3).
+
+`v3` is installer source support only. It does not install a release, add a
+`current` pointer or adopt the helpers into automatic agent discovery, refresh
+schedules or assistant call paths. Agents can use a `v3` release only after an
+operator installs and verifies one by explicit path from an exact merged
+canonical commit and its prepared manifest SHA256.

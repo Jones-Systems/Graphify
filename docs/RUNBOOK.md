@@ -830,3 +830,52 @@ The ceiling order, the approver check and the `approval_source` limitation are
 unchanged. Authenticity still rests on the coordinator's custody of the owner's
 message. A verified plan still authorizes and executes nothing. There is no
 executor, and every semantic batch needs its own owner approval.
+
+## Portable Release Closure V3
+
+`--closure v3` selects the closed `graphify-portable-release/v3` release. It
+has the ten `v2` helpers in the same order, then `structural_languages.py` and
+`semantic_batch.py`, all under `tooling/`: twelve helpers in all. The `v1` and
+`v2` closures, their manifests and their digests are unchanged, and omitting
+`--closure` still selects `v1`. `v3` adds no adapter, family or algorithm and
+changes no helper bytes. It ships two existing modules that the `v2` list
+omits:
+
+- `refresh_adapter_structural.py` loads family 2 from a sibling
+  `structural_languages.py` whose SHA256 must equal its pinned
+  `LANGUAGES_SHA256`. A `v2` release has no such sibling, so family 2 cannot
+  load from it.
+- `semantic_batch.py` needs only `graph_pack.py` and `graph_read.py`, which are
+  already in every closure.
+
+Use the [v2 commands](#portable-release-closure-v2) with `--closure v3` on
+every command for one release. Source selection, origin and
+installer-provenance checks, limits, modes, create-only publication, cleanup
+and the absence of a `current` pointer are unchanged. Prepare fails with
+`missing_or_nonregular_source_blob` if either new module is absent or not a
+regular blob, and with `source_blob_limit` if either exceeds 1 MiB. The release
+contains exactly `release.json` and the twelve `tooling/` files. Verifying a
+`v3` release as `v1` or `v2`, or a `v1` or `v2` release as `v3`, fails with
+`release_closure_mismatch`. Installing with another closure's digest fails with
+`manifest_digest_mismatch` before writing anything.
+
+Run released helpers by explicit path with `python3 -I -B`, so imports and the
+languages module resolve from the release's own `tooling/` directory and not
+from a source checkout.
+
+This is source support only. No `v3` release exists until an operator
+prepares, installs and verifies one. A full release record binds the exact
+source commit, its tree OID and the prepared manifest SHA256; the manifest
+itself records only the commit, so the operator records the tree. Compute them
+only from the merged canonical commit to be installed, not from a branch head.
+A `v3` release
+is a new digest-named sibling. It does not change or replace a `v1` or `v2`
+release, and the installer does not create a `current` pointer, agent binding,
+refresh schedule or service. Its source tests use synthetic helper bytes for
+installer mechanics. One test also installs this checkout's real twelve helpers
+into a synthetic repository and loads the driver, pack, semantic planner and
+family-2 languages from that release only. That test does not qualify a host
+installation, a real corpus or the full operational acceptance, and the
+deferred limitations in
+[native portable source installation](#native-portable-source-installation)
+are unchanged.

@@ -2,7 +2,8 @@
 """Install a Graphify portable helper closure from explicit local Git blobs.
 
 Closure v1 (the default) is the original five helpers; v2 is a closed ten-helper
-superset. Each command selects one closure, and verification rejects the other.
+superset, and v3 is a closed twelve-helper superset of v2. Each command selects
+one closure, and verification rejects the others.
 
 Linux-only, ordinary-user source installation. No dependencies, graph stores,
 bindings, current pointers or services are installed. Expected digests bind
@@ -33,7 +34,10 @@ SCHEMA_V2 = 'graphify-portable-release/v2'
 FILES_V2 = FILES + tuple('tooling/' + name for name in (
     'graph_catalog.py', 'graph_refresh_incremental.py', 'fragment_cache.py',
     'runtime_identity.py', 'refresh_adapter_structural.py'))
-CLOSURES = {'v1': (SCHEMA, FILES), 'v2': (SCHEMA_V2, FILES_V2)}
+SCHEMA_V3 = 'graphify-portable-release/v3'
+# v2 plus the family-2 adapter's adjacent languages module and the semantic planner.
+FILES_V3 = FILES_V2 + tuple('tooling/' + name for name in ('structural_languages.py', 'semantic_batch.py'))
+CLOSURES = {'v1': (SCHEMA, FILES), 'v2': (SCHEMA_V2, FILES_V2), 'v3': (SCHEMA_V3, FILES_V3)}
 INSTALLER = 'tooling/install_portable.py'
 MAX_BLOB = 1024 * 1024
 MAX_MANIFEST = 16384
