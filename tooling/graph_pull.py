@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Copy selected verified archives into a new portable store."""
+"""Copy selected verified archives into a new portable store.
+
+--repo selects every entry of that repository, including all of its slices.
+"""
 import argparse
 import hashlib
 import json
@@ -39,7 +42,7 @@ def pull(catalog_path, destination, repos, expected=None):
         selected.update(archives=entries,empty_repositories=[],upstream_catalog_sha256=upstream)
         raw=(json.dumps(selected,indent=2)+'\n').encode()
         with (destination/'download-catalog.json').open('xb') as f: f.write(raw)
-        return dict(schema='graphify-pull-result/v1',status='ok',catalog_sha256=hashlib.sha256(raw).hexdigest(),upstream_catalog_sha256=upstream,repositories=[e['source']['repository'] for e in entries])
+        return dict(schema='graphify-pull-result/v1',status='ok',catalog_sha256=hashlib.sha256(raw).hexdigest(),upstream_catalog_sha256=upstream,repositories=list(dict.fromkeys(e['source']['repository'] for e in entries)))
     except BaseException as original:
         if owned is not None:
             cleanup_mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT})

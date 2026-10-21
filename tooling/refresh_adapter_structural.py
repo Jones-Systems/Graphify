@@ -5,6 +5,10 @@ Reads only explicit staged inputs. No execution/import of source, file writes,
 subprocesses, environment lookup or network. This family is not legacy parity.
 Both protocols extract file-local fragments and assemble them over the whole
 admitted set; v2 also accepts verified reusable fragments and returns new ones.
+A v2 request whose extractor version is '2' selects family version 2: lexical
+extractors from the SHA256-pinned sibling structural_languages.py, a
+forbidden-marker check, closed record/output limits and optional slicing with a
+staged repository path index. Family version 1 never loads that module.
 """
 import ast
 from contextlib import contextmanager
@@ -27,6 +31,32 @@ LIMITS = dict(file_bytes=4 * 1024**2, input_bytes=16 * 1024**2,
 REQUEST_V1, REQUEST_V2 = 'graphify-refresh-request/v1', 'graphify-refresh-request/v2'
 FRAGMENT = 'graphify-structural-fragment/v1'
 GIT_LIMITATION = 'Git-object input; checkout cleanliness not observed.'
+
+VERSION_V2 = '2'
+FRAGMENT_V2 = 'graphify-structural-fragment/v2'
+PATH_INDEX = 'graphify-path-index/v1'
+# Family 2 bounds: one slice (D5) of at most 2048 files and 100000 assembled records.
+MAX_REQUEST_V2 = 2 * 1024**2
+MAX_ITEMS_V2 = 32768
+MAX_FILES_V2 = 2048
+MAX_RECORDS_V2 = 100000
+MAX_INDEX_PATHS = 32768
+MAX_INDEX_BYTES = 8 * 1024**2
+MAX_CANDIDATES = 32
+FRAGMENT_BYTES = 8 * 1024**2
+LIMITS_V2 = dict(file_bytes=4 * 1024**2, input_bytes=112 * 1024**2,
+                 output_bytes=64 * 1024**2, seconds=300)
+LANGUAGES_MODULE = 'structural_languages.py'
+LANGUAGES_SHA256 = '5f541b26d749777acab9590ba2102b788cb81ac434492f5a4c670a0112d6fd6f'
+MAX_LANGUAGES = 1024**2
+NODE_TYPES_V2 = frozenset(('class', 'function', 'method', 'interface', 'type', 'enum', 'variable',
+                           'namespace', 'export', 'struct', 'protocol', 'actor', 'extension',
+                           'package', 'heading', 'dependency', 'go_module', 'action'))
+EDGE_TYPES_V2 = frozenset(('contains', 'exports', 'depends_on', 'uses'))
+REFERENCE_KINDS_V2 = frozenset(('imports', 'links_to', 'sources', 'uses'))
+RESOLUTIONS_V2 = frozenset(('unique', 'first'))
+SLICE_NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,63}')
+LANGUAGES = None
 
 
 class Limit(ValueError):
@@ -98,7 +128,7 @@ def overlaps(p, taken):
     return p in taken or any(p.startswith(q + '/') or q.startswith(p + '/') for q in taken)
 
 
-def validate_common(request, keys, schema):
+def validate_common(request, keys, schema, bounds=LIMITS, max_files=256):
     closed(request, keys)
     require(request['schema'] == schema, 'unsupported request')
     checksum(request['manifest_sha256'])
@@ -112,18 +142,18 @@ def validate_common(request, keys, schema):
                                                            source['head']), 'invalid head')
     path(request['stage'], absolute=True)
     limits = request['limits']
-    closed(limits, LIMITS)
-    for key, maximum in LIMITS.items():
+    closed(limits, bounds)
+    for key, maximum in bounds.items():
         require(type(limits[key]) is int and 1 <= limits[key] <= maximum, 'invalid limit')
     files = request['files']
-    require(isinstance(files, list) and 1 <= len(files) <= 256, 'invalid files')
+    require(isinstance(files, list) and 1 <= len(files) <= max_files, 'invalid files')
     return source, files
 
 
-def validate_extractor(extractor, protocol):
+def validate_extractor(extractor, protocol, version=VERSION):
     closed(extractor, ('protocol', 'name', 'version', 'executable', 'script'))
     require(extractor['protocol'] == protocol and extractor['name'] == NAME
-            and extractor['version'] == VERSION, 'wrong extractor family')
+            and extractor['version'] == version, 'wrong extractor family')
     for key in ('executable', 'script'):
         closed(extractor[key], ('path', 'sha256'))
         path(extractor[key]['path'], absolute=True)
@@ -572,7 +602,353 @@ def respond_v2(raw, request):
     return response
 
 
+# Family version 2 -----------------------------------------------------------
+
+def load_languages():
+    """Load the sibling extractor module once, only from bytes matching LANGUAGES_SHA256."""
+    global LANGUAGES
+    if LANGUAGES is None:
+        location = PurePosixPath(os.path.realpath(__file__)).with_name(LANGUAGES_MODULE)
+        with directory(location.parts[1:-1]) as parent:
+            fd = os.open(location.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+            with os.fdopen(fd, 'rb') as stream:
+                require(stat.S_ISREG(os.fstat(stream.fileno()).st_mode), 'unsafe languages module')
+                raw = stream.read(MAX_LANGUAGES + 1)
+        require(len(raw) <= MAX_LANGUAGES and digest(raw) == LANGUAGES_SHA256,
+                'languages module mismatch')
+        namespace = dict(__name__='structural_languages', __file__=str(location))
+        try:
+            exec(compile(raw, str(location), 'exec', dont_inherit=True), namespace)
+        except SyntaxError as exc:
+            raise ValueError('languages module invalid') from exc
+        LANGUAGES = Languages(namespace)
+    return LANGUAGES
+
+
+class Languages:
+    """Attribute view of the executed languages module namespace."""
+
+    def __init__(self, namespace):
+        self.__dict__.update(namespace)
+
+
+def usable(value):
+    return (isinstance(value, str) and 0 < len(value) <= 4096
+            and not any(ord(c) < 32 for c in value))
+
+
+class ExtractionV2(Extraction):
+    """Family 2 sink: invalid labels or targets are a per-file limit; ids stay unique."""
+
+    def __init__(self, file, limits):
+        super().__init__(file, limits)
+        self.ids = {self.file_id}
+
+    def node(self, kind, label, *location):
+        if not usable(label):
+            raise Limit('invalid label')
+        identity = record_id(self.file, kind, label, *location)
+        if identity not in self.ids:
+            self.ids.add(identity)
+            super().node(kind, label, *location)
+        return identity
+
+    def reference(self, kind, target, line, candidates, resolution='unique'):
+        if not usable(target):
+            raise Limit('invalid reference')
+        key = kind, target, line
+        if key in self.references:
+            return
+        found = list(dict.fromkeys(c for c in map(candidate, candidates) if c is not None))
+        if len(found) > MAX_CANDIDATES:
+            raise Limit('candidate limit')
+        record = self.references[key] = dict(kind=kind, target=target, line=line,
+                                              candidates=found, resolution=resolution)
+        self.accounted.add(key)
+        self.account(record)
+
+
+def document_v2(file, raw, outcome, reason, records=None):
+    item = document(file, raw, outcome, reason, records)
+    item.update(schema=FRAGMENT_V2, family=dict(name=NAME, version=VERSION_V2))
+    return item
+
+
+def fragment_v2(file, raw, limits, languages):
+    """File-local family 2 fragment; marker, unsupported, parse and bound failures are unknown."""
+    path(file)
+    if languages.forbidden(raw):
+        return document_v2(file, raw, 'unknown', 'forbidden_marker')
+    records = ExtractionV2(file, limits)
+    try:
+        if file.endswith('.py'):
+            python_structure(raw, file, records)
+        else:
+            languages.extract(file, raw, records)
+        result = document_v2(file, raw, 'structural', None, records)
+        if len(encoded(result)) > limits['output_bytes']:
+            raise Limit('output byte limit')
+    except NotImplementedError:
+        return document_v2(file, raw, 'unknown', 'unsupported')
+    except (SyntaxError, RecursionError, UnicodeError) as exc:
+        return document_v2(file, raw, 'unknown', type(exc).__name__)
+    except Limit:
+        return document_v2(file, raw, 'unknown', 'limit')
+    return result
+
+
+def check_fragment_v2(item, file, content_sha256):
+    closed(item, ('schema', 'family', 'path', 'content_sha256', 'outcome', 'reason',
+                  'file_node', 'nodes', 'edges', 'references'))
+    require(item['schema'] == FRAGMENT_V2 and item['family'] == dict(name=NAME, version=VERSION_V2)
+            and item['path'] == file and item['content_sha256'] == content_sha256
+            and item['file_node'] == file_node(file), 'fragment identity mismatch')
+    nodes, edges, references = item['nodes'], item['edges'], item['references']
+    require(all(isinstance(x, list) for x in (nodes, edges, references))
+            and len(nodes) + len(edges) + len(references) <= MAX_RECORDS, 'invalid fragment records')
+    if item['outcome'] == 'unknown':
+        require(isinstance(item['reason'], str) and re.fullmatch('[A-Za-z][A-Za-z0-9_]{0,63}', item['reason'])
+                and not nodes and not edges and not references, 'invalid unknown fragment')
+        return
+    require(item['outcome'] == 'structural' and item['reason'] is None, 'invalid fragment outcome')
+    ids = {item['file_node']['id']}
+    for node in nodes:
+        closed(node, ('id', 'type', 'label', 'source_file'))
+        require(isinstance(node['id'], str) and re.fullmatch('structural-v1:[0-9a-f]{64}', node['id'])
+                and node['id'] not in ids and node['type'] in NODE_TYPES_V2
+                and node['source_file'] == file and usable(node['label']), 'invalid fragment node')
+        ids.add(node['id'])
+    seen = set()
+    for edge in edges:
+        closed(edge, ('source', 'target', 'type', 'source_file'))
+        key = edge['source'], edge['target'], edge['type']
+        require(edge['type'] in EDGE_TYPES_V2 and edge['source_file'] == file and edge['source'] in ids
+                and edge['target'] in ids and key not in seen, 'invalid fragment edge')
+        seen.add(key)
+    seen = set()
+    for reference in references:
+        closed(reference, ('kind', 'target', 'line', 'candidates', 'resolution'))
+        key = reference['kind'], reference['target'], reference['line']
+        found = reference['candidates']
+        require(reference['kind'] in REFERENCE_KINDS_V2 and usable(reference['target'])
+                and type(reference['line']) is int and reference['line'] >= 1
+                and reference['resolution'] in RESOLUTIONS_V2
+                and isinstance(found, list) and len(found) <= MAX_CANDIDATES
+                and len(set(found)) == len(found) and all(candidate(c) == c for c in found)
+                and key not in seen, 'invalid fragment reference')
+        seen.add(key)
+
+
+def disjoint(paths):
+    """True when no path repeats or is an ancestor of another; linear in total depth."""
+    seen, ancestors = set(), set()
+    for p in paths:
+        parts = p.split('/')
+        prefixes = ['/'.join(parts[:k]) for k in range(1, len(parts))]
+        if p in seen or p in ancestors or any(q in seen for q in prefixes):
+            return False
+        seen.add(p)
+        ancestors.update(prefixes)
+    return True
+
+
+def validate_family_v2(request):
+    """Return (admitted paths, slice name or None, staged index entry or None)."""
+    optional = tuple(k for k in ('slice', 'path_index') if isinstance(request, dict) and k in request)
+    limits = request.get('limits') if isinstance(request, dict) else None
+    bounds = dict(LIMITS_V2, records=MAX_RECORDS_V2) if isinstance(limits, dict) and 'records' in limits else LIMITS_V2
+    source, files = validate_common(
+        request, ('schema', 'manifest_sha256', 'source', 'input_basis', 'stage', 'files',
+                  'policy', 'extractor', 'limits') + optional, REQUEST_V2, bounds, MAX_FILES_V2)
+    require(request['input_basis'] == 'git_blob', 'unsupported input basis')
+    # Slicing is all or nothing: a slice name needs the index that resolves against other slices.
+    require(len(optional) in (0, 2), 'slice and path index must be given together')
+    admitted, staged = [], []
+    for entry in files:
+        closed(entry, ('path', 'sha256', 'action', 'fragment'))
+        admitted.append(str(path(entry['path'])))
+        checksum(entry['sha256'])
+        if entry['action'] == 'extract':
+            require(entry['fragment'] is None, 'unexpected fragment')
+        else:
+            require(entry['action'] == 'reuse', 'invalid action')
+            closed(entry['fragment'], ('stage_path', 'sha256'))
+            staged.append(str(path(entry['fragment']['stage_path'])))
+            checksum(entry['fragment']['sha256'])
+    name = index = None
+    if optional:
+        closed(request['slice'], ('name',))
+        name = request['slice']['name']
+        require(isinstance(name, str) and SLICE_NAME.fullmatch(name), 'invalid slice name')
+        index = request['path_index']
+        closed(index, ('stage_path', 'sha256'))
+        staged.append(str(path(index['stage_path'])))
+        checksum(index['sha256'])
+    require(disjoint(admitted) and disjoint(staged) and disjoint(admitted + staged),
+            'overlapping admission or staged input')
+    policy = request['policy']
+    closed(policy, ('schema', 'source', 'name', 'rules', 'limitations'))
+    require(policy['schema'] == 'graphify-pack-policy/v1' and policy['source'] == source
+            and policy['name'] == 'incremental-admission' and policy['limitations'] == [],
+            'invalid policy identity')
+    rules = policy['rules']
+    require(isinstance(rules, dict), 'invalid admission policy')
+    include, deny = patterns(rules.get('include')), patterns(rules.get('deny'))
+    for p in admitted:
+        require(any(fnmatch.fnmatchcase(p, x) for x in include)
+                and not any(fnmatch.fnmatchcase(p, x) for x in deny), 'denied file')
+    validate_extractor(request['extractor'], 'python-json/v2', VERSION_V2)
+    return set(admitted), name, index
+
+
+def read_path_index(raw, admitted, name):
+    """Return {path: slice}; it must map every own file to this request's slice."""
+    value = strict_json(raw, 2 * MAX_INDEX_PATHS + 16)
+    closed(value, ('schema', 'paths'))
+    require(value['schema'] == PATH_INDEX, 'unsupported path index')
+    paths = value['paths']
+    require(isinstance(paths, dict) and len(admitted) <= len(paths) <= MAX_INDEX_PATHS,
+            'invalid path index')
+    keys = list(paths)
+    require(keys == sorted(keys) and disjoint(keys), 'unsorted or overlapping path index')
+    for p, owner in paths.items():
+        require(candidate(p) == p and isinstance(owner, str) and SLICE_NAME.fullmatch(owner),
+                'invalid path index entry')
+    for p in admitted:
+        require(paths.get(p) == name, 'path index omits or misassigns an admitted file')
+    require(not any(owner == name and p not in admitted for p, owner in paths.items()),
+            'path index assigns an unadmitted file to this slice')
+    return paths
+
+
+def assemble_v2(fragments, source, request_sha256, limits, index=None):
+    """Resolve over the whole repository: the index when sliced, else the admitted set.
+    The same candidate set and test decide both, so slicing never changes a decision."""
+    admitted = set(fragments)
+    universe = admitted if index is None else index
+    maximum = limits.get('records', MAX_RECORDS)
+    nodes, edges, crossing, unresolved, errors, coverage = [], {}, {}, {}, [], {}
+    size = 0
+
+    def bound(record=None):
+        nonlocal size
+        size += len(encoded(record)) if record is not None else 0
+        require(len(nodes) + len(edges) + len(crossing) + len(unresolved) + len(errors) <= maximum,
+                'record limit')
+        require(size <= limits['output_bytes'], 'output byte limit')
+
+    for file in sorted(admitted):
+        require(fragments[file]['path'] == file, 'fragment path mismatch')
+        nodes.append(file_node(file))
+        bound(nodes[-1])
+    for file in sorted(admitted):
+        item = fragments[file]
+        coverage[file] = item['outcome']
+        if item['outcome'] != 'structural':
+            errors.append(dict(source_file=file, reason=item['reason']))
+            bound()
+            continue
+        for node in item['nodes']:
+            nodes.append(node)
+            bound(node)
+        for edge in item['edges']:
+            key = file, edge['source'], edge['target'], edge['type']
+            if key not in edges:
+                edges[key] = edge
+                bound(edge)
+        for reference in item['references']:
+            found = [c for c in reference['candidates'] if c in universe]
+            if reference['resolution'] == 'first':
+                found = found[:1]
+            if len(found) != 1:
+                record = dict(source_file=file, type=reference['kind'], target=reference['target'],
+                              line=reference['line'])
+                key, records = (file, record['type'], record['target'], record['line']), unresolved
+            elif found[0] in admitted:
+                record = dict(source=file_id(file), target=file_id(found[0]),
+                              type=reference['kind'], source_file=file)
+                key, records = (file, record['source'], record['target'], record['type']), edges
+            else:
+                record = dict(source=file_id(file), source_file=file, type=reference['kind'],
+                              target=reference['target'], line=reference['line'],
+                              target_path=found[0], target_id=file_id(found[0]),
+                              target_slice=index[found[0]])
+                key = file, record['type'], record['target'], record['line'], found[0]
+                records = crossing
+            if key not in records:
+                records[key] = record
+                bound(record)
+    family = dict(name=NAME, version=VERSION_V2)
+    common = dict(source=source, built_at_commit=source['head'],
+                  refresh_request_sha256=request_sha256, extractor_family=family)
+    graph = dict(common, directed=True, nodes=sorted(nodes, key=lambda n: n['id']),
+                 links=[edges[k] for k in sorted(edges)])
+    validation = dict(common, status='partial', semantic_coverage='none',
+                      covered_segments_by_file={p: [] for p in sorted(admitted)},
+                      structural_parser_errors=len(errors), parser_errors=errors,
+                      unresolved_references=[unresolved[k] for k in sorted(unresolved)],
+                      limitations=['Lexical structure only; no execution, compiler, type or call resolution, or semantic enrichment.',
+                                   'Imports resolve exact root-relative or relative paths only; aliases, packages, Go modules and Swift modules stay unresolved.',
+                                   'TS/JS relative imports and workflow uses resolve to the first present candidate in a declared order; alternatives are not reported.',
+                                   'Markdown covers headings and inline and reference-definition links, not full CommonMark.',
+                                   'Files containing a forbidden marker carry no records.',
+                                   'Source identity and observations are caller supplied, not independently attested.'])
+    if index is not None:
+        validation['cross_slice_references'] = [crossing[k] for k in sorted(crossing)]
+        validation['limitations'].append(
+            'Cross-slice references resolve against a caller-supplied path index; their targets are in other slices.')
+    return graph, validation, coverage
+
+
+def respond_family_v2(raw, request):
+    admitted, name, index_entry = validate_family_v2(request)
+    languages = load_languages()
+    limits, stage = request['limits'], request['stage']
+    per_file = dict(limits, output_bytes=min(limits['output_bytes'], FRAGMENT_BYTES))
+    total, index = 0, None
+    if index_entry is not None:
+        staged = dict(path=index_entry['stage_path'], sha256=index_entry['sha256'])
+        data = read_staged(stage, staged, min(MAX_INDEX_BYTES, limits['input_bytes']))
+        total = len(data)
+        index = read_path_index(data, admitted, name)
+    fragments, extracted = {}, {}
+    for entry in sorted(request['files'], key=lambda f: f['path']):
+        file, remaining = entry['path'], limits['input_bytes'] - total
+        if entry['action'] == 'extract':
+            data = read_staged(stage, entry, min(limits['file_bytes'], remaining))
+            item = extracted[file] = fragment_v2(file, data, per_file, languages)
+        else:
+            staged = dict(path=entry['fragment']['stage_path'], sha256=entry['fragment']['sha256'])
+            data = read_staged(stage, staged, min(FRAGMENT_BYTES, remaining))
+            item = strict_json(data, 40 * MAX_RECORDS + 64)
+            check_fragment_v2(item, file, entry['sha256'])
+        total += len(data)
+        require(total <= limits['input_bytes'], 'total input limit')
+        fragments[file] = item
+    sha = digest(raw)
+    # The adapter alone binds the slice into graph.source and validation.source; request.source
+    # stays {repository, head} and fragments stay slice-independent.
+    source = request['source'] if name is None else dict(request['source'], slice=name)
+    graph, validation, coverage = assemble_v2(fragments, source, sha, limits, index)
+    validation['limitations'].append(GIT_LIMITATION)
+    response = encoded(dict(schema='graphify-refresh-response/v2', request_sha256=sha, graph=graph,
+                            validation=validation, coverage=coverage, fragments=extracted))
+    require(len(response) <= limits['output_bytes'], 'output byte limit')
+    return response
+
+
+def family_v2(request):
+    extractor = request.get('extractor') if isinstance(request, dict) else None
+    return (request.get('schema') == REQUEST_V2 and isinstance(extractor, dict)
+            and extractor.get('version') == VERSION_V2)
+
+
 def respond(raw):
+    require(len(raw) <= MAX_REQUEST_V2, 'request byte limit')
+    request = strict_json(raw, MAX_ITEMS_V2)
+    if family_v2(request):
+        return respond_family_v2(raw, request)
+    # Every other request keeps the original bounds, parse and dispatch unchanged.
     require(len(raw) <= MAX_REQUEST, 'request byte limit')
     request = strict_json(raw)
     if isinstance(request, dict) and request.get('schema') == REQUEST_V2:
@@ -582,7 +958,7 @@ def respond(raw):
 
 def main():
     try:
-        response = respond(sys.stdin.buffer.read(MAX_REQUEST + 1))
+        response = respond(sys.stdin.buffer.read(MAX_REQUEST_V2 + 1))
     except (ValueError, TypeError, KeyError, OSError, RecursionError, OverflowError, MemoryError):
         # No partial JSON can be mistaken for success; stderr contains no source contents.
         sys.stderr.write('structural adapter rejected request or resource bound\n')
