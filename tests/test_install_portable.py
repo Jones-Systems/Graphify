@@ -416,7 +416,7 @@ class PortableClosureV2Tests(unittest.TestCase):
                 with self.subTest(expected=expected, closure=closure), self.assertRaisesRegex(
                         installer.InstallError, 'manifest_digest_mismatch'):
                     installer.install(source, revision, destination, expected, closure)
-            for closure in ('v3', '', None, 'V2'):
+            for closure in ('v4', '', None, 'V2'):
                 with self.subTest(closure=closure), self.assertRaisesRegex(
                         installer.InstallError, 'invalid_closure_selection'):
                     installer.prepare(source, revision, destination, closure)
@@ -433,7 +433,7 @@ class PortableClosureV2Tests(unittest.TestCase):
                 installer.validate_manifest(relabelled, 'v1')
             with self.assertRaisesRegex(installer.InstallError, 'invalid_closure'):
                 installer.validate_manifest({**v1, 'schema': installer.SCHEMA_V2}, 'v2')
-            for schema in ('graphify-portable-release/v3', ['graphify-portable-release/v2'], None):
+            for schema in ('graphify-portable-release/v4', ['graphify-portable-release/v2'], None):
                 with self.subTest(schema=schema), self.assertRaisesRegex(
                         installer.InstallError, 'invalid_manifest_identity'):
                     installer.validate_manifest({**v2, 'schema': schema}, 'v2')
@@ -494,7 +494,277 @@ class PortableClosureV2Tests(unittest.TestCase):
                     self.assertEqual(run([*verify, *selected], 1),
                                      {'status': 'error', 'reason': 'release_closure_mismatch'})
             self.assertEqual(len(run([*command, 'prepare', *common])['manifest']['files']), 5)
-            self.assertIsNone(run([*command, 'prepare', *common, '--closure', 'v3'], 2))
+            self.assertIsNone(run([*command, 'prepare', *common, '--closure', 'v4'], 2))
+
+
+@contextmanager
+def closure_fixture(contents, prefix):
+    """Commit `contents(path)` for every v3 helper; the installer is always real source."""
+    old = {}
+    def cancel(signum, frame):
+        raise KeyboardInterrupt('fixture cancelled')
+    try:
+        for sig in installer.SIGNALS:
+            old[sig] = signal.signal(sig, cancel)
+        with tempfile.TemporaryDirectory(prefix=prefix, dir=ROOT) as folder:
+            root = Path(folder)
+            try:
+                source = root / 'source'
+                (source / 'tooling').mkdir(parents=True)
+                for name in installer.FILES_V3:
+                    (source / name).write_bytes(contents(name))
+                (source / installer.INSTALLER).write_bytes((ROOT / installer.INSTALLER).read_bytes())
+                git(source, 'init', '-q')
+                git(source, 'remote', 'add', 'origin', 'https://github.com/Jones-Systems/Graphify.git')
+                git(source, 'add', 'tooling')
+                git(source, 'commit', '-qm', 'v3 portable closure fixture')
+                revision = git(source, 'rev-parse', 'HEAD')
+                destination = root / 'releases'
+                destination.mkdir(mode=0o700)
+                yield root, source, revision, destination
+            finally:
+                for parent, directories, _ in os.walk(root, followlinks=False):
+                    os.chmod(parent, 0o700)
+                    for name in directories:
+                        child = Path(parent) / name
+                        if not child.is_symlink():
+                            child.chmod(0o700)
+    finally:
+        for sig, handler in old.items():
+            signal.signal(sig, handler)
+
+
+class PortableClosureV3Tests(unittest.TestCase):
+    NEW = ('tooling/structural_languages.py', 'tooling/semantic_batch.py')
+
+    def fixture(self):
+        return closure_fixture(synthetic, '.portable-install-v3-test-')
+
+    def prepare(self, source, revision, destination, closure):
+        manifest, payloads = installer.prepare(source, revision, destination, closure)
+        return manifest, payloads, installer.digest(installer.encoded(manifest))
+
+    def commit_change(self, source, message):
+        git(source, 'add', '-A', 'tooling')
+        git(source, 'commit', '-qm', message)
+        return git(source, 'rev-parse', 'HEAD')
+
+    def test_v3_closure_is_exact_twelve_superset_of_v2(self):
+        self.assertEqual(installer.SCHEMA_V3, 'graphify-portable-release/v3')
+        self.assertEqual(len(installer.FILES_V3), 12)
+        self.assertEqual(len({Path(path).name for path in installer.FILES_V3}), 12)
+        self.assertEqual(installer.FILES_V3[:10], installer.FILES_V2)
+        self.assertEqual(installer.FILES_V3[10:], self.NEW)
+        self.assertNotIn(installer.INSTALLER, installer.FILES_V3)
+        self.assertEqual(installer.CLOSURES, {
+            'v1': (installer.SCHEMA, installer.FILES), 'v2': (installer.SCHEMA_V2, installer.FILES_V2),
+            'v3': (installer.SCHEMA_V3, installer.FILES_V3)})
+
+    def test_v3_prepare_deterministic_exact_twelve_committed_blobs(self):
+        with self.fixture() as (_, source, revision, destination):
+            manifest, payloads, sha = self.prepare(source, revision, destination, 'v3')
+            (source / 'tooling/unlisted.py').write_text('unlisted\n')
+            for name in self.NEW:
+                (source / name).write_text('uncommitted content must not be installed\n')
+            self.assertEqual(self.prepare(source, revision, destination, 'v3'), (manifest, payloads, sha))
+            self.assertEqual(manifest['schema'], installer.SCHEMA_V3)
+            self.assertEqual(set(manifest), {'schema', 'repository', 'revision', 'files', 'installer'})
+            self.assertEqual(manifest['revision'], revision)
+            self.assertEqual([record['path'] for record in manifest['files']], list(installer.FILES_V3))
+            self.assertEqual(list(payloads), list(installer.FILES_V3))
+            for record in manifest['files']:
+                listing = git(source, 'ls-tree', revision, '--', record['path']).split()
+                self.assertEqual((listing[0], listing[2]), (record['source_mode'], record['blob_oid']))
+                self.assertEqual(payloads[record['path']], synthetic(record['path']))
+                self.assertEqual(record['mode'], '0444')
+            self.assertEqual(manifest['installer']['sha256'],
+                             installer.digest((ROOT / installer.INSTALLER).read_bytes()))
+            v2, _ = installer.prepare(source, revision, destination, 'v2')
+            self.assertEqual(manifest['files'][:10], v2['files'])
+            self.assertEqual(manifest['installer'], v2['installer'])
+            self.assertEqual(list(destination.iterdir()), [])
+
+    def test_v3_install_then_verify_create_only(self):
+        with self.fixture() as (_, source, revision, destination):
+            manifest, _, sha = self.prepare(source, revision, destination, 'v3')
+            self.assertEqual(installer.install(source, revision, destination, sha, 'v3'), manifest)
+            release = destination / sha
+            self.assertEqual(installer.verify(release, sha, 'v3'), manifest)
+            self.assertEqual({path.relative_to(release) for path in release.rglob('*')},
+                             {Path('release.json'), Path('tooling'),
+                              *(Path(name) for name in installer.FILES_V3)})
+            for name in installer.FILES_V3:
+                self.assertEqual((release / name).read_bytes(), synthetic(name))
+                self.assertEqual((release / name).stat().st_mode & 0o777, 0o444)
+            self.assertEqual((release / 'tooling').stat().st_mode & 0o777, 0o555)
+            self.assertEqual(release.stat().st_mode & 0o777, 0o555)
+            self.assertEqual(sorted(path.name for path in destination.iterdir()), [sha])
+            before = snapshot(destination)
+            installer.install(source, revision, destination, sha, 'v3')
+            self.assertEqual(snapshot(destination), before)
+
+    def test_cross_v1_v2_v3_verify_and_install_rejected(self):
+        with self.fixture() as (_, source, revision, destination):
+            shas = {closure: self.prepare(source, revision, destination, closure)[2]
+                    for closure in ('v1', 'v2', 'v3')}
+            self.assertEqual(len(set(shas.values())), 3)
+            for closure, sha in shas.items():
+                installer.install(source, revision, destination, sha, closure)
+            before = snapshot(destination)
+            for built, sha in shas.items():
+                for selected in set(shas) - {built}:
+                    with self.subTest(built=built, selected=selected):
+                        with self.assertRaisesRegex(installer.InstallError, 'release_closure_mismatch'):
+                            installer.verify(destination / sha, sha, selected)
+                        with self.assertRaisesRegex(installer.InstallError, 'manifest_digest_mismatch'):
+                            installer.install(source, revision, destination, sha, selected)
+            with self.assertRaisesRegex(installer.InstallError, 'release_closure_mismatch'):
+                installer.verify(destination / shas['v3'], shas['v3'])
+            for closure in ('v4', 'V3', 'v3 ', ''):
+                with self.subTest(closure=closure), self.assertRaisesRegex(
+                        installer.InstallError, 'invalid_closure_selection'):
+                    installer.verify(destination / shas['v3'], shas['v3'], closure)
+            self.assertEqual(snapshot(destination), before)
+
+    def test_v3_relabelled_or_wrong_length_manifest_rejected(self):
+        with self.fixture() as (_, source, revision, destination):
+            v2, _ = installer.prepare(source, revision, destination, 'v2')
+            v3, _ = installer.prepare(source, revision, destination, 'v3')
+            installer.validate_manifest(v3, 'v3')
+            for value, closure in (({**v3, 'schema': installer.SCHEMA_V2}, 'v2'),
+                                   ({**v2, 'schema': installer.SCHEMA_V3}, 'v3'),
+                                   ({**v3, 'files': v3['files'][:11]}, 'v3'),
+                                   ({**v3, 'files': v3['files'][::-1]}, 'v3')):
+                with self.subTest(closure=closure, length=len(value['files'])), self.assertRaisesRegex(
+                        installer.InstallError, 'invalid_closure|invalid_manifest_record'):
+                    installer.validate_manifest(value, closure)
+
+    def test_missing_either_new_module_rejected(self):
+        for missing in self.NEW:
+            for kind in ('missing', 'symlink'):
+                with self.subTest(missing=missing, kind=kind), self.fixture() as (_, source, _, destination):
+                    (source / missing).unlink()
+                    if kind == 'symlink':
+                        (source / missing).symlink_to('graph_read.py')
+                    revision = self.commit_change(source, 'invalid v3 closure fixture')
+                    with self.assertRaisesRegex(installer.InstallError, 'missing_or_nonregular_source_blob'):
+                        installer.prepare(source, revision, destination, 'v3')
+                    self.assertEqual(len(installer.prepare(source, revision, destination, 'v2')[0]['files']), 10)
+                    self.assertEqual(list(destination.iterdir()), [])
+
+    def test_oversize_new_module_rejected(self):
+        for oversize in self.NEW:
+            with self.subTest(oversize=oversize), self.fixture() as (_, source, _, destination):
+                (source / oversize).write_bytes(b'#' * (installer.MAX_BLOB + 1))
+                revision = self.commit_change(source, 'oversize v3 helper fixture')
+                with self.assertRaisesRegex(installer.InstallError, 'source_blob_limit'):
+                    installer.prepare(source, revision, destination, 'v3')
+                self.assertEqual(list(destination.iterdir()), [])
+
+    def test_v3_installer_provenance_and_origin_still_bound(self):
+        with self.fixture() as (_, source, revision, destination):
+            git(source, 'remote', 'set-url', 'origin', 'https://example.invalid/Other/repo.git')
+            with self.assertRaisesRegex(installer.InstallError, 'source_repository_mismatch'):
+                installer.prepare(source, revision, destination, 'v3')
+            git(source, 'remote', 'set-url', 'origin', 'https://github.com/Jones-Systems/Graphify.git')
+            (source / installer.INSTALLER).write_text('# different installer\n')
+            revision = self.commit_change(source, 'different installer fixture')
+            with self.assertRaisesRegex(installer.InstallError, 'installer_revision_mismatch'):
+                installer.prepare(source, revision, destination, 'v3')
+            self.assertEqual(list(destination.iterdir()), [])
+
+    def test_v3_verify_rejects_tamper(self):
+        for mutation in ('bytes', 'mode', 'extra', 'missing', 'installer', 'directory_mode'):
+            with self.subTest(mutation=mutation), self.fixture() as (_, source, revision, destination):
+                _, _, sha = self.prepare(source, revision, destination, 'v3')
+                installer.install(source, revision, destination, sha, 'v3')
+                release = destination / sha
+                module = release / self.NEW[0]
+                if mutation == 'bytes':
+                    module.chmod(0o644)
+                    module.write_bytes(synthetic(self.NEW[1]))
+                    module.chmod(0o444)
+                elif mutation == 'mode':
+                    module.chmod(0o644)
+                elif mutation in ('extra', 'missing'):
+                    module.parent.chmod(0o755)
+                    if mutation == 'extra':
+                        (module.parent / 'extra.py').write_text('extra')
+                    else:
+                        (release / self.NEW[1]).unlink()
+                    module.parent.chmod(0o555)
+                elif mutation == 'installer':
+                    path = release / 'release.json'
+                    manifest = json.loads(path.read_bytes())
+                    manifest['installer']['sha256'] = 'f' * 64
+                    path.chmod(0o644)
+                    path.write_bytes(installer.encoded(manifest) + b'\n')
+                    path.chmod(0o444)
+                else:
+                    module.parent.chmod(0o755)
+                with self.assertRaises((installer.InstallError, OSError)):
+                    installer.verify(release, sha, 'v3')
+
+    def test_cli_v3_closure_selection(self):
+        with self.fixture() as (_, source, revision, destination):
+            command = [sys.executable, '-B', str(ROOT / installer.INSTALLER)]
+            common = ['--source', str(source), '--revision', revision, '--destination', str(destination)]
+            def run(arguments, code=0):
+                result = subprocess.run(arguments, capture_output=True, text=True, timeout=30,
+                                        env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'})
+                self.assertEqual(result.returncode, code, result.stderr + result.stdout)
+                return json.loads(result.stdout) if result.stdout else None
+            prepared = run([*command, 'prepare', *common, '--closure', 'v3'])
+            self.assertEqual([record['path'] for record in prepared['manifest']['files']],
+                             list(installer.FILES_V3))
+            sha = prepared['manifest_sha256']
+            installed = run([*command, 'install', *common, '--manifest-sha256', sha, '--closure', 'v3'])
+            self.assertEqual((installed['status'], installed['manifest']), ('installed', prepared['manifest']))
+            verify = [*command, 'verify', '--release', str(destination / sha), '--manifest-sha256', sha]
+            self.assertEqual(run([*verify, '--closure', 'v3'])['status'], 'verified')
+            for selected in ([], ['--closure', 'v1'], ['--closure', 'v2']):
+                with self.subTest(selected=selected):
+                    self.assertEqual(run([*verify, *selected], 1),
+                                     {'status': 'error', 'reason': 'release_closure_mismatch'})
+
+    def test_real_twelve_helper_release_runs_from_release_only(self):
+        """Real helper bytes: CLIs and the family-2 languages load resolve inside the release."""
+        real = lambda name: (ROOT / name).read_bytes()
+        with closure_fixture(real, '.portable-install-v3-real-test-') as (root, source, revision, destination):
+            shas = {closure: self.prepare(source, revision, destination, closure)[2] for closure in ('v2', 'v3')}
+            for closure, sha in shas.items():
+                installer.install(source, revision, destination, sha, closure)
+            release = destination / shas['v3']
+            before = snapshot(release)
+            outside = root / 'outside'
+            outside.mkdir()
+            def run(arguments, code=0, flags=('-E', '-s', '-B')):
+                # -E/-s drop PYTHONPATH and user site but keep the script directory first.
+                result = subprocess.run([sys.executable, *flags, *arguments], capture_output=True,
+                                        text=True, timeout=60, cwd=outside, env={'PATH': os.environ['PATH']})
+                self.assertEqual(result.returncode, code, result.stderr + result.stdout)
+                return result
+            for name in ('graph_pack.py', 'graph_refresh_incremental.py', 'semantic_batch.py'):
+                with self.subTest(name=name):
+                    self.assertIn('usage:', run([str(release / 'tooling' / name), '--help']).stdout)
+            for name in ('graph_refresh_incremental.py', 'semantic_batch.py'):
+                with self.subTest(name=name, isolated=True):
+                    self.assertIn('usage:', run([str(release / 'tooling' / name), '--help'],
+                                                flags=('-I', '-B')).stdout)
+            probe = ('import os, sys; tooling = sys.argv[1]; sys.path.insert(0, tooling); '
+                     'import refresh_adapter_structural as adapter; languages = adapter.load_languages(); '
+                     'import semantic_batch, graph_refresh_incremental; '
+                     'modules = (adapter, semantic_batch, graph_refresh_incremental, sys.modules["graph_pack"], '
+                     'sys.modules["graph_read"], sys.modules["runtime_identity"], sys.modules["fragment_cache"]); '
+                     'assert all(os.path.dirname(os.path.realpath(m.__file__)) == tooling for m in modules); '
+                     'assert os.path.dirname(languages.__file__) == tooling; print("ok")')
+            tooling = os.path.realpath(release / 'tooling')
+            self.assertEqual(run(['-c', probe, tooling], flags=('-I', '-B')).stdout.strip(), 'ok')
+            missing = run(['-c', probe, os.path.realpath(destination / shas['v2'] / 'tooling')], 1,
+                          flags=('-I', '-B'))
+            self.assertIn('structural_languages.py', missing.stderr)
+            self.assertEqual(snapshot(release), before)
+            self.assertEqual(list(release.rglob('__pycache__')), [])
 
 
 if __name__ == '__main__':
