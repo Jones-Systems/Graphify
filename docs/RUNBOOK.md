@@ -653,3 +653,111 @@ reason. Pack writes archives with mode 0600, so they are copied unless their
 owner has removed the write bits. Links save physical disk only. Quota
 accounting counts every path, so links give no quota relief. Consumer stores
 are not linked.
+
+## Sliced Incremental Builds
+
+`graph_refresh_incremental.py` also accepts a
+`graphify-incremental-manifest/v2`. Version 1 manifests, admission policy v1
+and `graphify-build-state/v1` keep their exact behavior. A v2 manifest replaces
+`previous_state` with `previous_run` (a SHA256-bound `slice-run.json` or null)
+and adds `mode` (`build` or `inventory_only`). It requires admission policy
+`graphify-admission-policy/v2`, the `python-json/v2` protocol and structural
+family version 2. Its `limits` add `records`.
+
+Policy v2 caps a repository at 32768 admitted files and 128 MiB, with at most
+4 MiB per file. `slicing.rules` is an ordered list of `{prefix, name}` or
+`{prefix, name, buckets}`. A prefix is a safe relative directory ending in `/`.
+Buckets are a fixed count from 1 to 16. A path belongs to the first rule whose
+prefix it starts with, and every other path belongs to `rest`. A bucketed rule
+assigns `NAME.NN` from `sha256(path) mod buckets`, so adding or removing other
+paths never moves a path. Every slice must stay within `max_slice_files` (at
+most 2048) and `max_slice_bytes`. Its assembled records are bounded by
+`max_slice_records` (at most 100000), which is passed to the adapter. The
+policy accepts at most 24 MiB for `max_slice_bytes`. That is the operating
+value until a measured cold response stays within 64 MiB / 1.5; the 48 MiB
+slice ceiling is not usable yet. The policy is refused if its possible slices
+exceed the 128-package catalog cap; the cap is never raised.
+
+Before any adapter run, the driver preflights every slice it would build. It
+computes the exact attempt-1 request bytes (at most 2 MiB), path-index bytes (at
+most 8 MiB), file count and content bytes. It also computes the staged input
+bytes, the larger of the cached and uncached forms (at most the manifest's
+`input_bytes`). To learn content digests, it reads blobs only to hash them.
+Each staged request must equal its preflighted bytes. The run holds as `held`
+when a slice or the repository exceeds a bound: `slice_over_limit`,
+`repository_over_limit` or `path_index_over_limit`. Every hold names its
+`bounds` and numbers. Nothing is extracted, written or split. Change the
+reviewed policy instead.
+
+The adapter reports no cause code when it refuses a request, for example on its
+record or output bound. The run then fails as `adapter_rejected` with the
+slice's preflight numbers in `failed_slice`. It is never relabelled as a hold.
+The only automatic retry is the existing single uncached fallback after
+rejected fragment reuse.
+
+`mode: inventory_only` reads only the Git tree and attributes. It writes
+`inventory.json` (`graphify-admission-inventory/v1`) with admitted, denied,
+not-included and unsupported counts, and the path-to-slice map. It gives path
+length (UTF-8 bytes, maximum and nearest-rank p99) for the repository and for
+each slice. It also gives slice sizes, an upper bound on each slice's request
+bytes (every file counted as reused), holds, and a preview of which slices'
+path-to-blob maps changed. It reads no
+blob, runs no adapter, opens no fragment cache, and does no forbidden-marker
+detection (that happens in the adapter). Review it before the first build of
+each repository.
+
+A build stages one copied `graphify-path-index/v1` (every admitted path mapped
+to its slice, at most 8 MiB) for each changed slice. Staging remains copy-only,
+with `nlink == 1`. A slice reruns the adapter only when its `input_digest` or
+its `resolution_digest` changed. `input_digest` covers the slice's path-to-blob
+map, unsupported entries, and family, policy, adapter, executable, per-file and
+runtime identities. `resolution_digest` is the canonical SHA256 of the sorted
+`[candidate, owning slice or null]` pairs over the slice's reference
+candidates. So adding, deleting or moving a target in another slice rebuilds
+only the slices that reference it. Any other slice reuses its verified package,
+which keeps its original built head. An unidentified runtime disables reuse.
+
+A completed build writes these files under the destination:
+
+- `path-index.json`.
+- `slices/NAME/` for each built slice: `attempts/`, `evidence/`, `candidate/`
+  and `build-state.json`.
+- `slice-set.json`.
+- `slice-run.json`.
+- `slice-report.json` (`graphify-slice-report/v1`) with each slice's
+  preflight numbers. A built slice also gets its staged input and response
+  bytes, the response/input ratio, wall seconds and child max RSS.
+
+The `graphify-slice-set/v1` record has the fields `repository`,
+`accepted_head`, `tree` and `slices`. Each slice entry has `name`,
+`package_sha256`, `built_head`, `input_digest`, `resolution_digest` and
+`build_state_sha256`. It lists only slices built at the accepted head and
+reused slices with equal digests. That equality is the proof that permits
+`equivalent_head` in `graph_catalog --slice-set`. `slice-run.json` binds the
+slice-set SHA256 and gives each slice's build-state and package path. Pass it
+as the next run's `previous_run`. Each slice state is
+`graphify-build-state/v2`: the v1 fields plus `slice`, `input_digest`,
+`resolution_digest`, `path_index_sha256` and `reference_candidates`. The v1
+semantic planner refuses a slice state. A same-head run where every slice is
+reused reports `unchanged` and creates no output.
+
+The v2 result (`graphify-incremental-result/v2`) reports repository and
+per-slice counts (`unchanged`, `unknown` and slice built, reused and removed
+counts). A rename counts as one added and one deleted path. It also reports
+resources: wall seconds, self and child max RSS from `getrusage`, adapter runs,
+logical bytes under the destination and fragment-cache bytes written. Exit
+status is 0 for `completed`, `unchanged` and `inventory`, 2 for `deferred` and
+`held`, and 1 otherwise.
+
+Family-2 fragments use the same fragment cache, with `fragment_schema`
+`graphify-structural-fragment/v2` and family 2 in the key. In a changed slice,
+an unchanged file reuses its verified cached fragment, so a one-file change
+extracts one file and reuses the rest. Before reuse, the driver checks each hit's
+schema, family, path and content digest. A mismatch is extracted again and
+counted as `invalid`. A fragment whose cache entry would exceed the v2 entry cap
+is not stored. It is counted as `cache_uncacheable` in the v2 counts; the v1
+counts are unchanged. An unidentified runtime disables the cache. If the adapter
+rejects reused fragments, the slice falls back once to uncached extraction. A
+second refusal fails as `adapter_rejected`. The adapter alone writes `source.slice` in graph and
+validation output. The driver refuses output without it and never rewrites
+adapter output. None of this promotes, catalogs, or establishes freshness.
