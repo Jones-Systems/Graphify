@@ -859,9 +859,13 @@ contains exactly `release.json` and the twelve `tooling/` files. Verifying a
 `release_closure_mismatch`. Installing with another closure's digest fails with
 `manifest_digest_mismatch` before writing anything.
 
-Run released helpers by explicit path with `python3 -I -B`, so imports and the
-languages module resolve from the release's own `tooling/` directory and not
-from a source checkout.
+Run released helpers by explicit path with `python3 -B` and no `PYTHONPATH`, so
+imports and the languages module resolve from the release's own `tooling/`
+directory and not from a source checkout. `-I` (or `-P`) drops the script's
+directory from the import path. `semantic_batch.py` and
+`graph_refresh_incremental.py` add their own directory back and still run under
+`-I`. Helpers that import siblings without doing so, such as `graph_pack.py`,
+fail under `-I` with `ModuleNotFoundError`.
 
 This is source support only. No `v3` release exists until an operator
 prepares, installs and verifies one. A full release record binds the exact

@@ -738,14 +738,19 @@ class PortableClosureV3Tests(unittest.TestCase):
             before = snapshot(release)
             outside = root / 'outside'
             outside.mkdir()
-            def run(arguments, code=0):
-                result = subprocess.run([sys.executable, '-I', '-B', *arguments], capture_output=True,
+            def run(arguments, code=0, flags=('-E', '-s', '-B')):
+                # -E/-s drop PYTHONPATH and user site but keep the script directory first.
+                result = subprocess.run([sys.executable, *flags, *arguments], capture_output=True,
                                         text=True, timeout=60, cwd=outside, env={'PATH': os.environ['PATH']})
                 self.assertEqual(result.returncode, code, result.stderr + result.stdout)
                 return result
             for name in ('graph_pack.py', 'graph_refresh_incremental.py', 'semantic_batch.py'):
                 with self.subTest(name=name):
                     self.assertIn('usage:', run([str(release / 'tooling' / name), '--help']).stdout)
+            for name in ('graph_refresh_incremental.py', 'semantic_batch.py'):
+                with self.subTest(name=name, isolated=True):
+                    self.assertIn('usage:', run([str(release / 'tooling' / name), '--help'],
+                                                flags=('-I', '-B')).stdout)
             probe = ('import os, sys; tooling = sys.argv[1]; sys.path.insert(0, tooling); '
                      'import refresh_adapter_structural as adapter; languages = adapter.load_languages(); '
                      'import semantic_batch, graph_refresh_incremental; '
@@ -754,8 +759,9 @@ class PortableClosureV3Tests(unittest.TestCase):
                      'assert all(os.path.dirname(os.path.realpath(m.__file__)) == tooling for m in modules); '
                      'assert os.path.dirname(languages.__file__) == tooling; print("ok")')
             tooling = os.path.realpath(release / 'tooling')
-            self.assertEqual(run(['-c', probe, tooling]).stdout.strip(), 'ok')
-            missing = run(['-c', probe, os.path.realpath(destination / shas['v2'] / 'tooling')], 1)
+            self.assertEqual(run(['-c', probe, tooling], flags=('-I', '-B')).stdout.strip(), 'ok')
+            missing = run(['-c', probe, os.path.realpath(destination / shas['v2'] / 'tooling')], 1,
+                          flags=('-I', '-B'))
             self.assertIn('structural_languages.py', missing.stderr)
             self.assertEqual(snapshot(release), before)
             self.assertEqual(list(release.rglob('__pycache__')), [])
