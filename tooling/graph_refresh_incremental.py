@@ -117,7 +117,8 @@ MODES = ('build', 'inventory_only')
 # A v2 state is a v1 state plus explicit slice fields; G-H v1 refuses it by schema and fields.
 SLICE_STATE_FIELDS = STATE_FIELDS + ('slice', 'input_digest', 'resolution_digest',
                                      'path_index_sha256', 'reference_candidates')
-SLICE_COUNTS = COUNTS + ('unchanged', 'unknown')
+# cache_uncacheable: extracted fragments whose cache entry would exceed the v2 entry cap.
+SLICE_COUNTS = COUNTS + ('unchanged', 'unknown', 'cache_uncacheable')
 RUN_COUNTS = SLICE_COUNTS + ('slices', 'slices_built', 'slices_reused', 'slices_removed',
                              'adapter_runs')
 SLICE_ENTRY_FIELDS = ('name', 'package_sha256', 'built_head', 'input_digest', 'resolution_digest',
@@ -650,7 +651,7 @@ def validate_response(raw, request_sha, files, extracted, schema=FRAGMENT_SCHEMA
     reader.require(isinstance(fragments, dict) and set(fragments) == set(extracted),
                    'adapter fragment selection mismatch')
     for path, item in fragments.items():
-        check_fragment(item, path, files[path], coverage[path])
+        check_fragment(item, path, files[path], coverage[path], schema, family)
     return response
 
 
@@ -1204,6 +1205,14 @@ def key_material_v2(manifest, runtime_sha, per_file_sha, path, content_sha):
                 fragment_schema=FRAGMENT_SCHEMA_V2, family=dict(FAMILY_V2))
 
 
+def cache_entry_bytes(material, fragment):
+    """Exact size of the cache entry put() would write (fragment_cache entry v1 encoding)."""
+    canonical = fragment_cache.canonical
+    return len(canonical(dict(schema=fragment_cache.ENTRY_SCHEMA, key_sha256=fragment_cache.key(material),
+                              key=material, fragment_sha256=fragment_cache.sha256(canonical(fragment)),
+                              fragment=fragment))) + 1
+
+
 def cache_accepts_v2(manifest, per_file_sha):
     """The fragment cache must recognize family-2 fragments; otherwise run uncached."""
     probe = key_material_v2(manifest, '0' * 64, per_file_sha, 'probe', '0' * 64)
@@ -1369,7 +1378,7 @@ class SlicedRun:
         digests = {f['path']: reader.digest(contents[f['path']]) if f['path'] in contents
                    else trusted[f['blob_oid']] for f in admitted}
         del contents
-        lookups = dict(hits=0, misses=0, corrupt=0, errors=0, oversize=0)
+        lookups = dict(hits=0, misses=0, corrupt=0, errors=0, oversize=0, invalid=0)
         keys, reuse = {}, {}
         if self.cache is not None:
             for f in admitted:
@@ -1384,7 +1393,13 @@ class SlicedRun:
                 lookups[dict(hit='hits', miss='misses', corrupt='corrupt')[status]] += 1
                 if status == 'hit':
                     blob = packer.encoded(item)
-                    if len(blob) > FRAGMENT_BYTES:
+                    if not (isinstance(item, dict) and item.get('schema') == FRAGMENT_SCHEMA_V2
+                            and item.get('family') == FAMILY_V2 and item.get('path') == f['path']
+                            and item.get('content_sha256') == digests[f['path']]
+                            and item.get('outcome') in ('structural', 'unknown')):
+                        # Revalidated here as well as by the cache; a mismatch is extracted.
+                        lookups['invalid'] += 1
+                    elif len(blob) > FRAGMENT_BYTES:
                         # The adapter would refuse it; extract instead and say so.
                         lookups['oversize'] += 1
                     else:
@@ -1505,9 +1520,14 @@ class SlicedRun:
         puts = {}
         if self.cache is not None and cache_reason != 'reuse_rejected':
             for p in sorted(extracted):
+                material, item = keys[p][1], response['fragments'][p]
                 try:
-                    outcome = self.cache.put(keys[p][1], response['fragments'][p])
-                except (OSError, ValueError):
+                    # put() reports an oversize entry only as 'error'; measure it first.
+                    if cache_entry_bytes(material, item) > fragment_cache.MAX_ENTRY_V2:
+                        outcome = 'uncacheable'
+                    else:
+                        outcome = self.cache.put(material, item)
+                except (OSError, ValueError, TypeError, RecursionError):
                     outcome = 'error'
                 puts[outcome] = puts.get(outcome, 0) + 1
         lookups = pre['lookups']
@@ -1522,11 +1542,13 @@ class SlicedRun:
                       extracted=len(extracted), deleted=len(set(old) - set(files)),
                       unknown=sum(1 for p in files if response['coverage'][p] == 'unknown'),
                       cache_hits=lookups['hits'], cache_misses=lookups['misses'],
-                      cache_corrupt=lookups['corrupt'], cache_full=puts.get('full', 0))
+                      cache_corrupt=lookups['corrupt'], cache_full=puts.get('full', 0),
+                      cache_uncacheable=puts.get('uncacheable', 0))
         counts['unchanged'] = counts['admitted'] - counts['added'] - counts['modified']
         if self.cache is not None and cache_reason is None:
             degraded = (lookups['corrupt'] or lookups['errors'] or lookups['oversize']
-                        or puts.get('error') or puts.get('exists_conflict'))
+                        or lookups['invalid'] or puts.get('error') or puts.get('exists_conflict')
+                        or puts.get('uncacheable'))
             status = self.cache.stats()['status']
             cache_reason = status if status != 'ok' else 'degraded' if degraded else 'ok'
         documents = pack_documents(m, sliced_source, response, files, self.relation, request_sha,
@@ -1761,7 +1783,7 @@ def execute_sliced(manifest, manifest_sha):
                     for k, v in item.items():
                         puts[k] = puts.get(k, 0) + v
                 lookups = {k: sum(x[k] for x in run.lookups) for k in
-                           ('hits', 'misses', 'corrupt', 'errors', 'oversize')}
+                           ('hits', 'misses', 'corrupt', 'errors', 'oversize', 'invalid')}
                 counts.update(cache_hits=lookups['hits'], cache_misses=lookups['misses'],
                               cache_corrupt=lookups['corrupt'], cache_full=puts.get('full', 0))
                 result['cache'] = dict(status=stats['status'], quota_bytes=stats['quota_bytes'],
@@ -1821,6 +1843,7 @@ def run_counts(slices, skipped, prior_states, built, adapter_runs):
     counts.update(admitted=len(admitted), deleted=len(set(old) - {f['path'] for f in admitted}),
                   unsupported=sum(len(v) for v in skipped.values()),
                   reused=sum(s['counts']['reused'] for s in built),
+                  cache_uncacheable=sum(s['counts']['cache_uncacheable'] for s in built),
                   extracted=sum(s['counts']['extracted'] for s in built),
                   slices=len(slices), slices_built=len(built),
                   slices_reused=len(slices) - len(built),

@@ -14,9 +14,13 @@ from unittest.mock import patch
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / 'tooling'), str(ROOT / 'tests')]
+import fragment_cache
+import graph_pack as packer
 import graph_read as reader
 import graph_refresh as refresh
 import graph_refresh_incremental as inc
+import refresh_adapter_structural as adapter
+import runtime_identity
 import semantic_batch as sb
 import test_graph_refresh_incremental as base
 
@@ -314,11 +318,11 @@ class PreflightTests(unittest.TestCase):
         with fixture() as fx:
             commit = fx.commit(FILES)
             no_adapter = patch.object(refresh, 'run_adapter', side_effect=AssertionError('adapter ran'))
-            with no_adapter, patch.object(inc, 'MAX_REQUEST_V2', 4096):
+            with no_adapter, patch.object(inc, 'MAX_REQUEST_V2', 512):
                 result = fx.build(commit)
             self.assertEqual((result['status'], result['reason']), ('held', 'slice_over_limit'))
             held = {h['slice']: h for h in result['hold']['holds']}
-            self.assertTrue(held and all(h['bounds'] == ['request_bytes'] and h['request_bytes'] > 4096
+            self.assertTrue(held and all(h['bounds'] == ['request_bytes'] and h['request_bytes'] > 512
                                          for h in held.values()))
             self.assertFalse(Path(result['destination']).exists())
             tight = dict(inc.LIMITS_V2, seconds=60, input_bytes=len(FILES['a/main.py']))
@@ -344,6 +348,163 @@ class PreflightTests(unittest.TestCase):
             self.assertEqual(result['resources']['adapter_runs'], 1)
 
 
+C_FILES = {f'c/k{i}.py': b'def k%d():\n    pass\n' % i for i in range(3)}
+
+
+def slice_dir(result, name):
+    return Path(run_slices(result)[name]['build_state']['path']).parent
+
+
+def slice_evidence(result, name):
+    """graph, validation and inventory of one built slice, without the request binding."""
+    documents = {n: json.loads((slice_dir(result, name) / 'evidence' / f'{n}.json').read_bytes())
+                 for n in ('graph', 'validation', 'inventory')}
+    for n in ('graph', 'validation'):
+        documents[n].pop('refresh_request_sha256')
+    return documents
+
+
+def adapter_wrapper(change=None, refuse=None):
+    """Wrap the real adapter run: optionally refuse a request or alter its response bytes."""
+    real, calls = refresh.run_adapter, []
+
+    def run(executable, script, request, cwd, limits):
+        body = json.loads(request.read())
+        request.seek(0)
+        calls.append(body)
+        if refuse is not None and refuse(body):
+            raise ValueError('extractor nonzero exit')
+        raw, evidence = real(executable, script, request, cwd, limits)
+        if change is not None:
+            response = json.loads(raw)
+            change(response)
+            raw = packer.encoded(response)
+        return raw, evidence
+    return run, calls
+
+
+def reuses(body):
+    return any(f['action'] == 'reuse' for f in body['files'])
+
+
+class CacheTests(unittest.TestCase):
+    """r4 I2 follow-on: family-2 fragments are cached once G-J accepts their schema."""
+
+    def test_driver_constants_match_cache_and_adapter(self):
+        self.assertEqual(inc.FRAGMENT_SCHEMA_V2, fragment_cache.FRAGMENT_SCHEMA_V2)
+        self.assertEqual(inc.FAMILY_V2, fragment_cache.FAMILY_V2)
+        self.assertEqual(inc.FRAGMENT_BYTES, adapter.FRAGMENT_BYTES)
+        self.assertEqual(inc.MAX_REQUEST_V2, adapter.MAX_REQUEST_V2)
+        self.assertEqual(inc.MAX_INDEX_BYTES, adapter.MAX_INDEX_BYTES)
+        self.assertNotIn('cache_uncacheable', inc.COUNTS)
+        self.assertEqual(len(inc.COUNTS), 11)
+
+    def test_one_changed_file_extracts_one_reuses_the_rest_and_equals_cold(self):
+        with fixture() as fx:
+            commit = fx.commit(dict(FILES, **C_FILES))
+            first = fx.build(commit)
+            self.assertEqual((first['status'], first['cache_status']), ('completed', 'ok'), first)
+            commit = fx.commit({'c/unrelated.py': b'def alone():\n    return 1\n'})
+            second = fx.build(commit, previous=first['slice_run'])
+            self.assertEqual((second['status'], second['cache_status']), ('completed', 'ok'), second)
+            state = load(run_slices(second)['c']['build_state'])
+            n = len(state['files'])
+            self.assertEqual(n, 5)
+            self.assertEqual({k: state['counts'][k] for k in
+                              ('extracted', 'reused', 'cache_hits', 'cache_misses', 'cache_uncacheable')},
+                             dict(extracted=1, reused=n - 1, cache_hits=n - 1, cache_misses=1,
+                                  cache_uncacheable=0))
+            self.assertEqual((second['counts']['extracted'], second['counts']['reused'],
+                              second['counts']['adapter_runs']), (1, n - 1, 1))
+            cold = fx.build(commit, state_root=str(fx.new_state()))
+            self.assertEqual(cold['status'], 'completed', cold)
+            self.assertEqual(load(run_slices(cold)['c']['build_state'])['counts']['extracted'], n)
+            self.assertEqual(slice_evidence(second, 'c'), slice_evidence(cold, 'c'))
+            cold_state = load(run_slices(cold)['c']['build_state'])
+            # graph_sha256 differs only through the bound request SHA256 (reuse vs extract).
+            for key in ('files', 'input_digest', 'resolution_digest', 'reference_candidates'):
+                self.assertEqual(state[key], cold_state[key], key)
+
+    def test_oversize_entries_are_counted_uncacheable_and_not_stored(self):
+        with fixture() as fx:
+            commit = fx.commit(FILES)
+            with patch.object(fragment_cache, 'MAX_ENTRY_V2', 64):
+                result = fx.build(commit)
+            self.assertEqual((result['status'], result['cache_status']), ('completed', 'degraded'), result)
+            self.assertEqual(result['counts']['cache_uncacheable'], len(FILES))
+            self.assertEqual(result['cache']['puts'], dict(uncacheable=len(FILES)))
+            self.assertEqual(fx.entries(), [])
+
+    def test_unidentified_runtime_disables_caching(self):
+        with fixture() as fx:
+            commit = fx.commit(FILES)
+            unknown = runtime_identity.unidentified('synthetic probe failure')
+            with patch.object(runtime_identity, 'identify', return_value=unknown):
+                first = fx.build(commit)
+                again = fx.build(commit, previous=first['slice_run'])
+            for result in (first, again):
+                self.assertEqual(result['status'], 'completed', result)
+                self.assertEqual(result['cache_status'], 'cache_disabled:runtime_unidentified')
+                self.assertEqual(result['counts']['extracted'], len(FILES))
+                self.assertEqual(result['counts']['cache_hits'] + result['counts']['cache_misses'], 0)
+            self.assertTrue(all(f['key_sha256'] is None
+                                for s in run_slices(first).values() for f in load(s['build_state'])['files']))
+            self.assertFalse((fx.state / inc.CACHE_DIRECTORY).exists())
+
+    def test_rejected_reuse_falls_back_once_and_never_again(self):
+        with fixture() as fx:
+            commit = fx.commit(dict(FILES, **C_FILES))
+            first = fx.build(commit)
+            commit = fx.commit({'c/unrelated.py': b'def alone():\n    return 2\n'})
+            run, calls = adapter_wrapper(refuse=reuses)
+            with patch.object(refresh, 'run_adapter', run):
+                second = fx.build(commit, previous=first['slice_run'])
+            self.assertEqual(second['status'], 'completed', second)
+            self.assertEqual([reuses(c) for c in calls], [True, False])
+            self.assertEqual(load(run_slices(second)['c']['build_state'])['cache_status'], 'reuse_rejected')
+            self.assertEqual(second['counts']['adapter_runs'], 2)
+            run, calls = adapter_wrapper(refuse=lambda body: True)
+            commit = fx.commit({'c/unrelated.py': b'def alone():\n    return 3\n'})
+            with patch.object(refresh, 'run_adapter', run):
+                third = fx.build(commit, previous=second['slice_run'])
+            self.assertEqual((third['status'], third['reason']),
+                             ('failed', 'adapter_rejected: extractor nonzero exit'))
+            self.assertEqual(len(calls), 2)
+            self.assertIsNone(third['hold'])
+
+
+class SourceBindingTests(unittest.TestCase):
+    """r4 I1 check 4: only adapter-bound slice sources pack; tampering is refused unrewritten."""
+
+    def test_tampered_slice_source_is_refused_and_left_as_emitted(self):
+        def drop(response):
+            for part in ('graph', 'validation'):
+                response[part]['source'].pop('slice')
+
+        def rename(response):
+            for part in ('graph', 'validation'):
+                response[part]['source']['slice'] = 'other'
+
+        with fixture() as fx:
+            commit = fx.commit(FILES)
+            good = fx.build(commit)
+            self.assertEqual(good['status'], 'completed', good)
+            for entry in load(good['slice_set'])['slices']:
+                package = json.loads((slice_dir(good, entry['name']) / 'candidate' / 'package.json')
+                                     .read_bytes())
+                self.assertEqual(package['source']['slice'], entry['name'])
+            for change in (drop, rename):
+                run, _ = adapter_wrapper(change=change)
+                with patch.object(refresh, 'run_adapter', run):
+                    result = fx.build(commit)
+                self.assertEqual(result['status'], 'failed', result)
+                self.assertIn('adapter output lacks slice source binding', result['reason'])
+                attempt = Path(result['destination']) / 'slices' / 'a' / 'attempts' / '1'
+                emitted = json.loads((attempt / 'adapter-response.json').read_bytes())
+                self.assertNotEqual(emitted['graph']['source'].get('slice'), 'a')
+                self.assertFalse((Path(result['destination']) / 'slices' / 'a' / 'candidate').exists())
+
+
 def index_files(fx, paths, raw=b'x = 1\n'):
     """Commit many paths sharing one blob through the index; no work-tree files."""
     blob = subprocess.run(['git', '-C', str(fx.work), 'hash-object', '-w', '--stdin'], input=raw,
@@ -354,12 +515,14 @@ def index_files(fx, paths, raw=b'x = 1\n'):
     return fx.publish()
 
 
-def scale_report(name, result):
+def scale_report(name, result, **extra):
+    """Append one measurement line; holds report their preflight numbers instead of slices."""
     target = os.environ.get('GRAPHIFY_SLICE_SCALE_REPORT')
-    if target and result.get('slice_report'):
-        rows = load(result['slice_report'])['slices']
+    if target:
+        rows = load(result['slice_report'])['slices'] if result.get('slice_report') else None
         with open(target, 'a', encoding='utf-8') as handle:
-            handle.write(json.dumps(dict(case=name, resources=result['resources'], slices=rows),
+            handle.write(json.dumps(dict(case=name, status=result['status'], resources=result['resources'],
+                                         slices=rows, hold=result.get('hold'), **extra),
                                     sort_keys=True) + '\n')
 
 
@@ -391,8 +554,9 @@ class ScaleQualificationTests(unittest.TestCase):
             self.assertEqual(result['status'], 'completed', result)
             graph = json.loads((Path(run_slices(result)['dense']['build_state']['path']).parent
                                 / 'evidence' / 'graph.json').read_bytes())
-            self.assertGreater(len(graph['nodes']) + len(graph['links']), 95000)
-            scale_report('record_dense', result)
+            records = len(graph['nodes']) + len(graph['links'])
+            self.assertGreater(records, 95000)
+            scale_report('record_dense', result, graph_records=records)
 
     def test_long_path_request_and_index_hold_at_their_byte_bounds(self):
         with fixture() as fx:
@@ -405,6 +569,7 @@ class ScaleQualificationTests(unittest.TestCase):
             self.assertEqual((hold['slice'], hold['bounds']), ('long', ['request_bytes']))
             self.assertGreater(hold['request_bytes'], inc.MAX_REQUEST_V2)
             self.assertLessEqual(hold['index_bytes'], inc.MAX_INDEX_BYTES)
+            scale_report('long_path_request', result)
         with fixture() as fx:
             stem = 'W/' + 'q' * 240 + '/'
             commit = index_files(fx, [f'{stem}m{i:05d}.py' for i in range(32768)])
@@ -413,12 +578,15 @@ class ScaleQualificationTests(unittest.TestCase):
                                                                         buckets=16)]))
             self.assertEqual(result['status'], 'held', result)
             self.assertIn('path_index_over_limit', {h['reason'] for h in result['hold']['holds']})
+            scale_report('long_path_index', result)
             inventory = fx.build(commit, mode='inventory_only',
                                  admission_policy=policy([dict(prefix='W/', name='wide', buckets=16)]))
             self.assertEqual(inventory['status'], 'inventory', inventory)
             document = load(inventory['inventory'])
             self.assertFalse(document['path_index']['within_limit'])
             self.assertGreater(document['path_length']['p99_bytes'], 240)
+            scale_report('long_path_inventory', inventory, path_length=document['path_length'],
+                         path_index=document['path_index'])
 
 
 if __name__ == '__main__':

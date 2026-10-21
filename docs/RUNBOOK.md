@@ -749,9 +749,15 @@ logical bytes under the destination and fragment-cache bytes written. Exit
 status is 0 for `completed`, `unchanged` and `inventory`, 2 for `deferred` and
 `held`, and 1 otherwise.
 
-Family-2 fragments are cached only when `fragment_cache` accepts their schema.
-Until then every changed slice re-extracts all of its files and reports
-`cache_disabled:fragment_schema_unsupported`. That is an open efficiency gap,
-not accepted behavior. The adapter alone writes `source.slice` in graph and
+Family-2 fragments use the same fragment cache, with `fragment_schema`
+`graphify-structural-fragment/v2` and family 2 in the key. In a changed slice,
+an unchanged file reuses its verified cached fragment, so a one-file change
+extracts one file and reuses the rest. Before reuse, the driver checks each hit's
+schema, family, path and content digest. A mismatch is extracted again and
+counted as `invalid`. A fragment whose cache entry would exceed the v2 entry cap
+is not stored. It is counted as `cache_uncacheable` in the v2 counts; the v1
+counts are unchanged. An unidentified runtime disables the cache. If the adapter
+rejects reused fragments, the slice falls back once to uncached extraction. A
+second refusal fails as `adapter_rejected`. The adapter alone writes `source.slice` in graph and
 validation output. The driver refuses output without it and never rewrites
 adapter output. None of this promotes, catalogs, or establishes freshness.
