@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """Plan one semantic batch and verify an owner approval record against it.
 
-`plan` reads only explicitly named, SHA256-bound inputs: structural build-state
-files (graphify-build-state/v1, at most one per repository), a semantic baseline
-(graphify-semantic-baseline/v1) or --baseline-none, and an optional rate card
-(graphify-semantic-rate-card/v1). It compares each build state's admitted files
-with the baseline by content SHA256 and writes one create-only plan
-(graphify-semantic-batch-plan/v1) to an explicit path. The plan reports per
+`plan` reads only explicitly named, SHA256-bound inputs: per repository either
+one structural build state (graphify-build-state/v1) or one sliced build
+(graphify-slice-set/v1 plus exactly the graphify-build-state/v2 slice states it
+names), a semantic baseline (graphify-semantic-baseline/v1) or --baseline-none,
+and an optional rate card (graphify-semantic-rate-card/v1). A slice set is
+merged into one repository view: the union of its disjoint slice files at its
+accepted head and tree. It compares each repository's admitted files with the
+baseline by content SHA256 and writes one create-only plan to an explicit path:
+graphify-semantic-batch-plan/v1 when only v1 build states are named, otherwise
+graphify-semantic-batch-plan/v2, whose inputs also record kind and slices. The plan reports per
 repository the revision range, new/changed/deleted/unchanged counts with bounded
 path lists, input bytes, and estimated tokens. Each new or changed file is
 estimated as ceil(ceil(bytes / 4) * overhead_percent / 100) input tokens plus a
@@ -14,11 +18,17 @@ fixed max output per file. These are heuristic estimates, not tokenizer counts
 or billing quotes. Cost appears only when a hashed rate card is supplied. A plan
 whose estimate exceeds the requested ceiling is refused and nothing is written.
 
-`verify` reads a plan, an approval record (graphify-semantic-approval/v1) and the
-current inputs, all SHA256-bound, and writes nothing. It recomputes the plan
+`verify` reads a plan, an approval record of the same version
+(graphify-semantic-approval/v1 or /v2) and the current inputs, all SHA256-bound, and writes nothing. It recomputes the plan
 from the current inputs and refuses on any binding, freshness, expiry or ceiling
 mismatch. The required order is estimate <= approved ceiling <= requested
 ceiling. A verified result authorizes and executes nothing.
+
+A slice built at an earlier head is accepted only when the producer's
+equivalence proof reproduces here: its input_digest recomputes from its own
+state, and its resolution_digest recomputes against the accepted path index
+(the union of the slice files). That checks the producer's records for
+consistency; it does not attest the source independently of them.
 
 There is no executor, and no model, provider, network or credential access.
 Existing semantic outputs are neither read beyond the named baseline nor
@@ -41,9 +51,11 @@ from graph_pack import bounded_text, closed, encoded, file_path, selected_input
 from graph_read import StoreError, digest, require, valid_hash
 
 PLAN_SCHEMA = 'graphify-semantic-batch-plan/v1'
+PLAN_SCHEMA_V2 = 'graphify-semantic-batch-plan/v2'
 BASELINE_SCHEMA = 'graphify-semantic-baseline/v1'
 RATE_CARD_SCHEMA = 'graphify-semantic-rate-card/v1'
 APPROVAL_SCHEMA = 'graphify-semantic-approval/v1'
+APPROVAL_SCHEMA_V2 = 'graphify-semantic-approval/v2'
 VERIFICATION_SCHEMA = 'graphify-semantic-approval-verification/v1'
 # Mirrors graph_refresh_incremental.STATE_SCHEMA/STATE_FIELDS (equality is tested);
 # not imported so this module stays free of the driver's Git subprocess code.
@@ -54,6 +66,23 @@ STATE_FIELDS = ('schema', 'repository', 'family', 'commit', 'tree', 'input_basis
                 'request_sha256', 'files', 'unsupported', 'package_sha256', 'catalog_sha256',
                 'archive_sha256', 'graph_sha256', 'counts', 'cache_status', 'target_relation')
 STATE_FILE_FIELDS = ('path', 'blob_oid', 'sha256', 'bytes', 'coverage', 'key_sha256')
+# Mirrors the driver's sliced records and digests (equality is tested).
+SLICE_STATE_SCHEMA = 'graphify-build-state/v2'
+SLICE_SET_SCHEMA = 'graphify-slice-set/v1'
+SLICE_INPUT_SCHEMA = 'graphify-slice-input/v1'
+PATH_INDEX_SCHEMA = 'graphify-path-index/v1'
+FAMILY_V2 = dict(name='graphify-stdlib-structural', version='2')
+SLICE_STATE_FIELDS = STATE_FIELDS + ('slice', 'input_digest', 'resolution_digest',
+                                     'path_index_sha256', 'reference_candidates')
+SLICE_SET_FIELDS = ('schema', 'repository', 'accepted_head', 'tree', 'slices')
+SLICE_ENTRY_FIELDS = ('name', 'package_sha256', 'built_head', 'input_digest', 'resolution_digest',
+                      'build_state_sha256')
+IDENTITY_FIELDS = ('admission_policy_sha256', 'adapter_sha256', 'executable_sha256',
+                   'per_file_policy_sha256', 'runtime_identity_sha256')
+SLICE_NAME = r'[A-Za-z0-9][A-Za-z0-9_.-]{0,63}'
+MAX_SLICES = 128
+MAX_SLICE_FILES = 2048
+MAX_CANDIDATES = 262144
 PLAN_FIELDS = ('schema', 'created_at', 'expires_at', 'model_id', 'inputs', 'estimate',
                'requested_ceiling_tokens', 'repositories', 'totals', 'estimated_cost',
                'existing_semantic_outputs', 'authorizes', 'limitations')
@@ -163,8 +192,165 @@ def build_state(selection):
         require(valid_hash(f['sha256']) and type(f['bytes']) is int and f['bytes'] >= 0,
                 'invalid build state file record')
         seen[f['path']] = (f['sha256'], f['bytes'])
-    return dict(repository=state['repository'], commit=state['commit'], tree=state['tree'],
-                sha256=selection[1], files=seen)
+    return dict(repository=state['repository'], kind='state', commit=state['commit'],
+                tree=state['tree'], sha256=selection[1], files=seen)
+
+
+def canonical_sha256(value):
+    """The driver's canonical digest: compact sorted ASCII JSON without the newline."""
+    return digest(encoded(value)[:-1])
+
+
+def slice_input_digest(state):
+    """Recompute the driver's input_digest from one slice state's own fields."""
+    return canonical_sha256(dict(
+        schema=SLICE_INPUT_SCHEMA, repository=state['repository'], slice=state['slice'],
+        family=FAMILY_V2, files=sorted([f['path'], f['blob_oid']] for f in state['files']),
+        unsupported=sorted([u['path'], u['reason']] for u in state['unsupported']),
+        identities={k: state[k] for k in IDENTITY_FIELDS}))
+
+
+def slice_resolution_digest(candidates, index):
+    """Recompute the driver's resolution_digest: sorted [(candidate, owning slice or null)]."""
+    return canonical_sha256(sorted([c, index.get(c)] for c in set(candidates)))
+
+
+def slice_state(selection):
+    """One SHA256-bound graphify-build-state/v2; never accepted as a whole repository."""
+    state = load(selection, 'slice build state')
+    closed(state, SLICE_STATE_FIELDS, 'slice build state')
+    require(state['schema'] == SLICE_STATE_SCHEMA and state['input_basis'] == 'git_blob'
+            and state['family'] == FAMILY_V2, 'unsupported slice build state')
+    repository(state['repository'])
+    require(isinstance(state['slice'], str) and re.fullmatch(SLICE_NAME, state['slice']),
+            'invalid slice build state name')
+    commit_id(state['commit'], 'slice build state commit')
+    commit_id(state['tree'], 'slice build state tree')
+    for key in ('package_sha256', 'input_digest', 'resolution_digest', 'path_index_sha256') + \
+            IDENTITY_FIELDS[:-1]:
+        require(valid_hash(state[key]), 'invalid slice build state ' + key)
+    require(state['runtime_identity_sha256'] is None or valid_hash(state['runtime_identity_sha256']),
+            'invalid slice build state runtime_identity_sha256')
+    files = state['files']
+    require(isinstance(files, list) and 1 <= len(files) <= MAX_SLICE_FILES,
+            'invalid slice build state files')
+    seen = {}
+    for f in files:
+        closed(f, STATE_FILE_FIELDS, 'slice build state file')
+        file_path(f['path'])
+        require(f['path'] not in seen, 'duplicate slice build state path')
+        require(valid_hash(f['sha256']) and type(f['bytes']) is int and f['bytes'] >= 0
+                and isinstance(f['blob_oid'], str)
+                and re.fullmatch('[0-9a-f]{40}|[0-9a-f]{64}', f['blob_oid']),
+                'invalid slice build state file record')
+        seen[f['path']] = (f['sha256'], f['bytes'])
+    unsupported = state['unsupported']
+    require(isinstance(unsupported, list) and len(unsupported) <= MAX_FILES,
+            'invalid slice build state unsupported')
+    for u in unsupported:
+        closed(u, ('path', 'reason'), 'slice build state unsupported')
+        require(isinstance(u['path'], str) and isinstance(u['reason'], str),
+                'invalid slice build state unsupported')
+    candidates = state['reference_candidates']
+    require(isinstance(candidates, list) and len(candidates) <= MAX_CANDIDATES
+            and all(isinstance(c, str) for c in candidates) and candidates == sorted(set(candidates)),
+            'invalid slice build state reference candidates')
+    return dict(state=state, sha256=selection[1], files=seen)
+
+
+def slice_set(selection, pool):
+    """Merge one SHA256-bound graphify-slice-set/v1 with exactly the slice states it names.
+
+    pool maps provided slice-state SHA256 -> loaded state; consumed entries are removed.
+    """
+    value = load(selection, 'slice set')
+    closed(value, SLICE_SET_FIELDS, 'slice set')
+    require(value['schema'] == SLICE_SET_SCHEMA, 'unsupported slice set')
+    repository(value['repository'])
+    head = commit_id(value['accepted_head'], 'slice set accepted_head')
+    tree = commit_id(value['tree'], 'slice set tree')
+    entries = value['slices']
+    require(isinstance(entries, list) and 1 <= len(entries) <= MAX_SLICES, 'invalid slice set slices')
+    names = []
+    for e in entries:
+        closed(e, SLICE_ENTRY_FIELDS, 'slice set slice')
+        require(isinstance(e['name'], str) and re.fullmatch(SLICE_NAME, e['name'])
+                and isinstance(e['built_head'], str) and len(e['built_head']) == len(head)
+                and re.fullmatch('[0-9a-f]+', e['built_head'])
+                and all(valid_hash(e[k]) for k in ('package_sha256', 'input_digest',
+                                                    'resolution_digest', 'build_state_sha256')),
+                'invalid slice set slice')
+        names.append(e['name'])
+    require(len(set(names)) == len(names), 'duplicate slice in slice set')
+    require(names == sorted(names), 'slice set slices unsorted')
+    states = []
+    for e in entries:
+        loaded = pool.pop(e['build_state_sha256'], None)
+        require(loaded is not None, 'missing slice ' + e['name'])
+        state = loaded['state']
+        require(state['repository'] == value['repository'],
+                'slice state repository differs from slice set: ' + e['name'])
+        require(state['slice'] == e['name'], 'slice state name differs from slice set: ' + e['name'])
+        require((state['commit'], state['package_sha256'], state['input_digest'],
+                 state['resolution_digest']) == (e['built_head'], e['package_sha256'],
+                                                 e['input_digest'], e['resolution_digest']),
+                'slice state contradicts slice set: ' + e['name'])
+        require(slice_input_digest(state) == state['input_digest'],
+                'slice input digest does not reproduce: ' + e['name'])
+        states.append(loaded)
+    identities = {tuple(s['state'][k] for k in IDENTITY_FIELDS) for s in states}
+    require(len(identities) == 1, 'slice identities differ within slice set')
+    index, files = {}, {}
+    for s in states:
+        for path, record in s['files'].items():
+            require(path not in index, 'overlapping slice path ' + path)
+            index[path] = s['state']['slice']
+            files[path] = record
+    require(len(files) <= MAX_FILES, 'invalid slice set files')
+    index_sha = digest(encoded(dict(schema=PATH_INDEX_SCHEMA, paths=index)))
+    for s in states:
+        state = s['state']
+        reproduced = slice_resolution_digest(state['reference_candidates'], index) == \
+            state['resolution_digest']
+        if state['commit'] == head:
+            require(state['tree'] == tree, 'slice tree differs from slice set: ' + state['slice'])
+            require(state['path_index_sha256'] == index_sha,
+                    'slice path index differs from slice set union: ' + state['slice'])
+            require(reproduced, 'slice resolution digest does not reproduce: ' + state['slice'])
+        else:
+            # A reused slice needs the producer's digest equality to hold at the accepted head.
+            require(reproduced, 'unproved slice head ' + state['slice'])
+    return dict(repository=value['repository'], kind='slice_set', commit=head, tree=tree,
+                sha256=selection[1],
+                slices=[dict(name=s['state']['slice'], sha256=s['sha256']) for s in states],
+                files=files)
+
+
+def repositories(build_states, slice_sets, slice_states):
+    """Validate and merge the selected inputs into one record per repository."""
+    require(len(build_states) + len(slice_sets) <= MAX_REPOSITORIES, 'too many build states')
+    require(len(slice_states) <= MAX_REPOSITORIES * MAX_SLICES, 'too many slice build states')
+    states = [build_state(s) for s in build_states]
+    pool = {}
+    for selection in slice_states:
+        loaded = slice_state(selection)
+        require(loaded['sha256'] not in pool, 'duplicate slice build state ' + loaded['state']['slice'])
+        pool[loaded['sha256']] = loaded
+    states += [slice_set(s, pool) for s in slice_sets]
+    if pool:
+        extra = min((s['state']['repository'], s['state']['slice']) for s in pool.values())
+        raise StoreError('extra slice build state not named by any slice set: %s %s' % extra)
+    require(1 <= len(states) <= MAX_REPOSITORIES, 'one or more build states are required')
+    require(len({s['repository'] for s in states}) == len(states), 'duplicate build state repository')
+    return states
+
+
+def input_record(state):
+    """The plan/approval v2 build_states entry for one repository."""
+    record = dict(repository=state['repository'], kind=state['kind'], sha256=state['sha256'])
+    if state['kind'] == 'slice_set':
+        record['slices'] = [dict(s) for s in state['slices']]
+    return record
 
 
 def baseline(selection):
@@ -261,10 +447,14 @@ def body(states, prior, card, model_id, overhead_percent, max_output, requested)
                     amount=str(amount.quantize(Decimal('0.000001'), rounding=ROUND_CEILING)),
                     label=COST_LABEL)
     unselected = sorted(set(prior['repositories']) - {s['repository'] for s in states}) if prior else []
+    ordered = sorted(states, key=lambda s: s['repository'])
+    # Only v1 states keep the v1 plan byte-for-byte; any slice set needs the v2 inputs.
+    sliced = any(s['kind'] == 'slice_set' for s in states)
     return dict(
-        schema=PLAN_SCHEMA, model_id=model_id,
-        inputs=dict(build_states=[dict(repository=s['repository'], sha256=s['sha256'])
-                                  for s in sorted(states, key=lambda s: s['repository'])],
+        schema=PLAN_SCHEMA_V2 if sliced else PLAN_SCHEMA, model_id=model_id,
+        inputs=dict(build_states=[input_record(s) if sliced
+                                  else dict(repository=s['repository'], sha256=s['sha256'])
+                                  for s in ordered],
                     baseline_sha256=prior['sha256'] if prior else None,
                     rate_card_sha256=card['sha256'] if card else None),
         estimate=dict(method='ceil(ceil(bytes/4) * input_overhead_percent / 100) per new or changed '
@@ -279,15 +469,13 @@ def body(states, prior, card, model_id, overhead_percent, max_output, requested)
 
 
 def prepare(build_states, baseline_selection, rate_selection, model_id, overhead_percent,
-            max_output, requested):
+            max_output, requested, slice_sets=(), slice_states=()):
     model(model_id)
     require(type(overhead_percent) is int and 100 <= overhead_percent <= 1000,
             'input overhead percent must be 100..1000')
     tokens(max_output, 'max output tokens per file', 1)
     tokens(requested, 'requested ceiling', 1)
-    require(1 <= len(build_states) <= MAX_REPOSITORIES, 'one or more build states are required')
-    states = [build_state(s) for s in build_states]
-    require(len({s['repository'] for s in states}) == len(states), 'duplicate build state repository')
+    states = repositories(build_states, slice_sets, slice_states)
     prior = baseline(baseline_selection)
     require(prior is None or prior['model_id'] == model_id,
             'baseline model differs; plan with --baseline-none for a full batch')
@@ -323,7 +511,7 @@ def plan(args, now=None):
     require(1 <= args.valid_hours <= MAX_VALID_HOURS, 'valid hours must be 1..%d' % MAX_VALID_HOURS)
     document = prepare(args.build_state, args.baseline, args.rate_card, args.model_id,
                        args.input_overhead_percent, args.max_output_tokens_per_file,
-                       args.requested_ceiling)
+                       args.requested_ceiling, args.slice_set, args.slice_state)
     created = now.replace(microsecond=0)
     document.update(created_at=stamp(created), expires_at=stamp(created + timedelta(hours=args.valid_hours)))
     closed(document, PLAN_FIELDS, 'plan')
@@ -337,14 +525,39 @@ def plan(args, now=None):
 
 # Verification ----------------------------------------------------------------
 
-def approval_record(value):
+def input_records_v2(states, label):
+    """Validate v2 plan or approval build_states: [{repository, kind, sha256, slices?}]."""
+    require(isinstance(states, list) and 1 <= len(states) <= MAX_REPOSITORIES,
+            'invalid ' + label + 's')
+    for s in states:
+        require(isinstance(s, dict) and s.get('kind') in ('state', 'slice_set'), 'invalid ' + label)
+        sliced = s['kind'] == 'slice_set'
+        closed(s, ('repository', 'kind', 'sha256') + (('slices',) if sliced else ()), label)
+        repository(s['repository'])
+        require(valid_hash(s['sha256']), 'invalid ' + label + ' sha256')
+        if sliced:
+            require(isinstance(s['slices'], list) and 1 <= len(s['slices']) <= MAX_SLICES,
+                    'invalid ' + label + ' slices')
+            for item in s['slices']:
+                closed(item, ('name', 'sha256'), label + ' slice')
+                require(isinstance(item['name'], str) and re.fullmatch(SLICE_NAME, item['name'])
+                        and valid_hash(item['sha256']), 'invalid ' + label + ' slice')
+    require(len({s['repository'] for s in states}) == len(states), 'duplicate ' + label + ' repository')
+
+
+def approval_record(value, sliced=False):
+    """A v1 record keeps its exact v1 rules; a v2 plan requires a v2 record."""
     closed(value, APPROVAL_FIELDS, 'approval record')
-    require(value['schema'] == APPROVAL_SCHEMA, 'unsupported approval record')
+    require(value['schema'] == (APPROVAL_SCHEMA_V2 if sliced else APPROVAL_SCHEMA),
+            'unsupported approval record')
     require(valid_hash(value['plan_sha256']), 'invalid approval plan sha256')
     bounded_text(value['approved_by'], 'approved_by')
     bounded_text(value['approval_source'], 'approval_source')
     tokens(value['token_ceiling'], 'approval token ceiling', 1)
     states = value['build_states']
+    if sliced:
+        input_records_v2(states, 'approval build state')
+        return value
     require(isinstance(states, list) and 1 <= len(states) <= MAX_REPOSITORIES,
             'invalid approval build states')
     for s in states:
@@ -360,15 +573,19 @@ def check(args, now):
     raw_plan, document = selected_input(args.plan[0], args.plan[1], MAX_INPUT)
     plan_sha = digest(raw_plan)
     closed(document, PLAN_FIELDS, 'plan')
-    require(document['schema'] == PLAN_SCHEMA, 'unsupported plan')
+    require(document['schema'] in (PLAN_SCHEMA, PLAN_SCHEMA_V2), 'unsupported plan')
+    sliced = document['schema'] == PLAN_SCHEMA_V2
     closed(document['estimate'], ('method', 'bytes_per_token', 'input_overhead_percent',
                                   'max_output_tokens_per_file', 'label'), 'plan estimate')
     closed(document['inputs'], ('build_states', 'baseline_sha256', 'rate_card_sha256'), 'plan inputs')
     require(isinstance(document['inputs']['build_states'], list), 'invalid plan build states')
-    for s in document['inputs']['build_states']:
-        closed(s, ('repository', 'sha256'), 'plan build state')
-        repository(s['repository'])
-        require(valid_hash(s['sha256']), 'invalid plan build state sha256')
+    if sliced:
+        input_records_v2(document['inputs']['build_states'], 'plan build state')
+    else:
+        for s in document['inputs']['build_states']:
+            closed(s, ('repository', 'sha256'), 'plan build state')
+            repository(s['repository'])
+            require(valid_hash(s['sha256']), 'invalid plan build state sha256')
     require(isinstance(document['totals'], dict), 'invalid plan totals')
     tokens(document['totals'].get('estimated_total_tokens'), 'plan estimated total tokens')
     tokens(document['requested_ceiling_tokens'], 'plan requested ceiling', 1)
@@ -376,7 +593,7 @@ def check(args, now):
     created = utc(document['created_at'], 'plan created_at')
     expires = utc(document['expires_at'], 'plan expires_at')
     _, approval = selected_input(args.approval[0], args.approval[1], MAX_INPUT)
-    approval_record(approval)
+    approval_record(approval, sliced)
     approved_at = utc(approval['approved_at'], 'approved_at')
     approval_expires = utc(approval['expires_at'], 'approval expires_at')
 
@@ -388,15 +605,19 @@ def check(args, now):
     try:
         current = prepare(args.build_state, args.baseline, args.rate_card, document['model_id'],
                           estimate['input_overhead_percent'], estimate['max_output_tokens_per_file'],
-                          document['requested_ceiling_tokens'])
+                          document['requested_ceiling_tokens'], args.slice_set, args.slice_state)
     except Refused as exc:
         current = None
         reasons.append('current inputs exceed the requested ceiling: ' + str(exc))
     if current is not None and current != {k: v for k, v in document.items()
                                            if k not in ('created_at', 'expires_at')}:
         reasons.append('stale plan: current build states, baseline or rate card do not reproduce it')
-    approved_states = sorted((s['repository'], s['sha256']) for s in approval['build_states'])
-    planned_states = sorted((s['repository'], s['sha256']) for s in document['inputs']['build_states'])
+    if sliced:
+        approved_states = sorted(encoded(s) for s in approval['build_states'])
+        planned_states = sorted(encoded(s) for s in document['inputs']['build_states'])
+    else:
+        approved_states = sorted((s['repository'], s['sha256']) for s in approval['build_states'])
+        planned_states = sorted((s['repository'], s['sha256']) for s in document['inputs']['build_states'])
     if approved_states != planned_states:
         reasons.append('approval build states do not match the plan')
     if not created <= approved_at <= now:
@@ -436,8 +657,14 @@ def parser():
     sub = p.add_subparsers(dest='command', required=True)
 
     def inputs(command):
-        command.add_argument('--build-state', nargs=2, action='append', required=True,
-                             metavar=('PATH', 'SHA256'), help='current structural build-state.json')
+        command.add_argument('--build-state', nargs=2, action='append', default=[],
+                             metavar=('PATH', 'SHA256'),
+                             help='current unsliced graphify-build-state/v1 build-state.json')
+        command.add_argument('--slice-set', nargs=2, action='append', default=[],
+                             metavar=('PATH', 'SHA256'), help='current graphify-slice-set/v1 slice-set.json')
+        command.add_argument('--slice-state', nargs=2, action='append', default=[],
+                             metavar=('PATH', 'SHA256'),
+                             help='each graphify-build-state/v2 build-state.json its slice set names')
         base = command.add_mutually_exclusive_group(required=True)
         base.add_argument('--baseline', nargs=2, metavar=('PATH', 'SHA256'))
         base.add_argument('--baseline-none', dest='baseline', action='store_const', const=None)
