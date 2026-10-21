@@ -16,6 +16,7 @@ from unittest.mock import patch
 TOOLING = Path(__file__).resolve().parents[1] / 'tooling'
 sys.path.insert(0, str(TOOLING))
 import graph_pack
+import graph_refresh_incremental as inc
 import semantic_batch as sb
 
 NOW = datetime(2026, 10, 21, 12, 0, 0, tzinfo=timezone.utc)
@@ -417,6 +418,430 @@ class StaticGuardTests(unittest.TestCase):
                                 capture_output=True, text=True, timeout=60, env={}, cwd='/')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), '')
+
+
+IDENTITY = dict(dict.fromkeys(sb.IDENTITY_FIELDS, 'a' * 64), runtime_identity_sha256=None)
+# V2 split three ways; the same files as the unsliced state('Org/one', C2, V2).
+THREE = {'a': {'a.py': V2['a.py']}, 'b': {'b.py': V2['b.py']}, 'rest': {'d.py': V2['d.py']}}
+
+
+def slice_docs(groups, repository='Org/one', head=C2, tree='e' * 40, built=None, candidates=None,
+               old_index=None):
+    """A graphify-slice-set/v1 and its v2 slice states, digests computed by the driver itself.
+
+    built maps slice -> earlier head (reused); old_index is the index that slice resolved against.
+    """
+    built, candidates = built or {}, candidates or {}
+    index, raw = inc.path_index({n: [dict(path=p) for p in fs] for n, fs in groups.items()})
+    states = {}
+    for name, files in groups.items():
+        doc = dict(state(repository, built.get(name, head), files), schema=sb.SLICE_STATE_SCHEMA,
+                   family=dict(sb.FAMILY_V2), **IDENTITY)
+        doc['tree'] = tree if name not in built else 'd' * 40
+        found = sorted(set(candidates.get(name, [])))
+        doc.update(slice=name, reference_candidates=found,
+                   path_index_sha256=sha(raw) if name not in built else '9' * 64,
+                   input_digest=inc.input_digest(repository, name, doc['files'], doc['unsupported'],
+                                                 {k: doc[k] for k in inc.IDENTITY_FIELDS}),
+                   resolution_digest=inc.resolution_digest(
+                       found, old_index if name in built and old_index is not None else index))
+        states[name] = doc
+    record = dict(schema=sb.SLICE_SET_SCHEMA, repository=repository, accepted_head=head, tree=tree,
+                  slices=[dict(name=n, package_sha256=s['package_sha256'], built_head=s['commit'],
+                               input_digest=s['input_digest'], resolution_digest=s['resolution_digest'],
+                               build_state_sha256=None) for n, s in sorted(states.items())])
+    return record, states
+
+
+def write_sliced(root, record, states, tag='s', fix=True):
+    """Write states then the slice set; fix=True binds each entry to its written state hash."""
+    selections = {}
+    for name, doc in states.items():
+        selections[name] = write(root, f'{tag}-{name}.json', doc)
+    for entry in record['slices']:
+        if fix and entry['name'] in selections:
+            entry['build_state_sha256'] = selections[entry['name']][1]
+    return write(root, f'{tag}-set.json', record), selections
+
+
+def sliced_argv(argv, slice_sets=(), slice_states=()):
+    head, tail = argv[:1], argv[1:]
+    for s in slice_sets:
+        head += ['--slice-set', *s]
+    for s in slice_states:
+        head += ['--slice-state', *s]
+    return head + tail
+
+
+def sliced_plan(root, record, states, output, base=None, tag='s', omit=(), extra=(), **options):
+    chosen, selections = write_sliced(root, record, states, tag)
+    picked = [sel for n, sel in sorted(selections.items()) if n not in omit] + list(extra)
+    argv = sliced_argv(plan_argv([], output, base=base, **options), [chosen], picked)
+    return run_plan(argv), chosen, selections
+
+
+class SlicedMirrorTests(unittest.TestCase):
+    def test_sliced_schema_and_digests_mirror_incremental_driver(self):
+        for name in ('SLICE_STATE_SCHEMA', 'SLICE_SET_SCHEMA', 'SLICE_INPUT_SCHEMA', 'PATH_INDEX_SCHEMA',
+                     'FAMILY_V2', 'SLICE_STATE_FIELDS', 'SLICE_ENTRY_FIELDS', 'IDENTITY_FIELDS',
+                     'MAX_SLICES', 'MAX_SLICE_FILES', 'MAX_CANDIDATES'):
+            self.assertEqual(getattr(sb, name), getattr(inc, name), name)
+        self.assertEqual(sb.SLICE_NAME, inc.SLICE_NAME.pattern)
+        self.assertEqual(sb.STATE_FIELDS, sb.SLICE_STATE_FIELDS[:len(sb.STATE_FIELDS)])
+        record, states = slice_docs(THREE, candidates=dict(a=['b.py', 'zz.py']))
+        index, raw = inc.path_index({n: [dict(path=p) for p in fs] for n, fs in THREE.items()})
+        for doc in states.values():
+            self.assertEqual(sb.slice_input_digest(doc), doc['input_digest'])
+            self.assertEqual(sb.slice_resolution_digest(doc['reference_candidates'], index),
+                             doc['resolution_digest'])
+        self.assertEqual(sb.digest(sb.encoded(dict(schema=sb.PATH_INDEX_SCHEMA, paths=index))), sha(raw))
+        self.assertEqual(sb.canonical_sha256(record), inc.canonical_sha256(record))
+
+
+class SlicedPlanTests(unittest.TestCase):
+    def plan_both(self, root, record, states, **options):
+        base = write(root, 'b.json', baseline([('Org/one', C1, V1)]))
+        unsliced = write(root, 'u.json', state('Org/one', C2, V2))
+        run_plan(plan_argv([unsliced], root / 'u-plan.json', base=base, **options))
+        result, chosen, selections = sliced_plan(root, record, states, root / 's-plan.json', base=base,
+                                                 **options)
+        return (graph_pack.strict_json((root / 'u-plan.json').read_bytes()),
+                graph_pack.strict_json((root / 's-plan.json').read_bytes()), result, chosen, selections)
+
+    def test_three_slices_plan_identically_to_equivalent_unsliced_state(self):
+        with workspace() as root:
+            record, states = slice_docs(THREE, candidates=dict(a=['b.py']))
+            unsliced, sliced, result, chosen, selections = self.plan_both(root, record, states,
+                                                                          card=None)
+        self.assertEqual(result['status'], 'planned')
+        self.assertEqual((unsliced['schema'], sliced['schema']), (sb.PLAN_SCHEMA, sb.PLAN_SCHEMA_V2))
+        self.assertEqual(sliced['repositories'], unsliced['repositories'])
+        self.assertEqual(sliced['totals'], unsliced['totals'])
+        repo = sliced['repositories'][0]
+        self.assertEqual(repo['counts'], dict(new=1, changed=1, deleted=1, unchanged=1))
+        self.assertEqual(repo['paths'], dict(new=['d.py'], changed=['b.py'], deleted=['c.py']))
+        self.assertEqual(repo['revision_range'], {'from': C1, 'to': C2, 'tree': 'e' * 40})
+        self.assertEqual(sliced['totals']['estimated_total_tokens'], 208)
+        self.assertEqual(sliced['inputs']['build_states'], [dict(
+            repository='Org/one', kind='slice_set', sha256=chosen[1],
+            slices=[dict(name=n, sha256=selections[n][1]) for n in ('a', 'b', 'rest')])])
+        for key in ('estimate', 'estimated_cost', 'requested_ceiling_tokens', 'limitations', 'authorizes'):
+            self.assertEqual(sliced[key], unsliced[key], key)
+
+    def test_reused_slice_with_reproduced_equivalence_uses_accepted_head(self):
+        with workspace() as root:
+            record, states = slice_docs(THREE, built=dict(b=C1), candidates=dict(b=['a.py']))
+            unsliced, sliced, result, _, _ = self.plan_both(root, record, states)
+        self.assertEqual(result['status'], 'planned')
+        self.assertEqual(states['b']['commit'], C1)
+        self.assertEqual(sliced['repositories'], unsliced['repositories'])
+
+    def test_unproved_slice_head_refuses(self):
+        old_index = {'a.py': 'rest', 'b.py': 'b', 'd.py': 'rest'}
+        with workspace() as root:
+            # b was built at C1 when a.py belonged to rest; its resolution differs at C2.
+            record, states = slice_docs(THREE, built=dict(b=C1), candidates=dict(b=['a.py']),
+                                        old_index=old_index)
+            with self.assertRaisesRegex(sb.StoreError, 'unproved slice head b'):
+                sliced_plan(root, record, states, root / 'p.json')
+            # The same mismatch at the accepted head is a non-reproducing digest, never a pass.
+            record, states = slice_docs(THREE, candidates=dict(b=['a.py']))
+            states['b']['resolution_digest'] = inc.resolution_digest(['a.py'], old_index)
+            record['slices'][1]['resolution_digest'] = states['b']['resolution_digest']
+            with self.assertRaisesRegex(sb.StoreError, 'resolution digest does not reproduce: b'):
+                sliced_plan(root, record, states, root / 'p.json', tag='h')
+            # An earlier built head with an input change is never proved by its record.
+            record, states = slice_docs(THREE, built=dict(b=C1))
+            states['b']['files'][0]['blob_oid'] = '0' * 40
+            with self.assertRaisesRegex(sb.StoreError, 'input digest does not reproduce: b'):
+                sliced_plan(root, record, states, root / 'p.json', tag='i')
+            self.assertFalse((root / 'p.json').exists())
+
+    def test_missing_extra_duplicate_and_standalone_slices_refuse(self):
+        with workspace() as root:
+            for omitted in ('a', 'b', 'rest'):
+                record, states = slice_docs(THREE)
+                with self.assertRaisesRegex(sb.StoreError, 'missing slice ' + omitted):
+                    sliced_plan(root, record, states, root / 'p.json', tag='m' + omitted, omit={omitted})
+            record, states = slice_docs(THREE)
+            stray = write(root, 'stray.json', slice_docs({'c': {'c.py': b'c'}})[1]['c'])
+            with self.assertRaisesRegex(sb.StoreError, 'extra slice build state .*Org/one c'):
+                sliced_plan(root, record, states, root / 'p.json', tag='x', extra=[stray])
+            record, states = slice_docs(THREE)
+            again = write(root, 'x-a.json', states['a'])
+            with self.assertRaisesRegex(sb.StoreError, 'duplicate slice build state a'):
+                sliced_plan(root, record, states, root / 'p.json', tag='x', extra=[again])
+            record, states = slice_docs(THREE)
+            record['slices'].insert(1, dict(record['slices'][0]))
+            with self.assertRaisesRegex(sb.StoreError, 'duplicate slice in slice set'):
+                sliced_plan(root, record, states, root / 'p.json', tag='d')
+            record, states = slice_docs(THREE)
+            record['slices'].reverse()
+            with self.assertRaisesRegex(sb.StoreError, 'slice set slices unsorted'):
+                sliced_plan(root, record, states, root / 'p.json', tag='o')
+            # A slice state alone is never a whole repository, by either option.
+            alone = write(root, 'alone.json', slice_docs(THREE)[1]['a'])
+            with self.assertRaisesRegex(sb.StoreError, 'build state fields'):
+                run_plan(plan_argv([alone], root / 'p.json'))
+            with self.assertRaisesRegex(sb.StoreError, 'not named by any slice set'):
+                run_plan(sliced_argv(plan_argv([], root / 'p.json'), [], [alone]))
+            with self.assertRaisesRegex(sb.StoreError, 'one or more build states are required'):
+                run_plan(plan_argv([], root / 'p.json'))
+            self.assertFalse((root / 'p.json').exists())
+
+    def test_overlapping_paths_and_wrong_repository_refuse(self):
+        with workspace() as root:
+            record, states = slice_docs(dict(THREE, b={'b.py': V2['b.py'], 'a.py': V2['a.py']}))
+            with self.assertRaisesRegex(sb.StoreError, 'overlapping slice path a.py'):
+                sliced_plan(root, record, states, root / 'p.json', tag='v')
+            record, states = slice_docs(THREE)
+            states['b'] = slice_docs(THREE, repository='Org/two')[1]['b']
+            with self.assertRaisesRegex(sb.StoreError, 'slice state repository differs from slice set: b'):
+                sliced_plan(root, record, states, root / 'p.json', tag='r')
+            record, states = slice_docs(THREE)
+            states['b']['slice'] = 'other'
+            with self.assertRaisesRegex(sb.StoreError, 'slice state name differs from slice set: b'):
+                sliced_plan(root, record, states, root / 'p.json', tag='n')
+            record, states = slice_docs(THREE)
+            same = write(root, 'same.json', state('Org/one', C2, V2))
+            chosen, selections = write_sliced(root, record, states, 'u')
+            with self.assertRaisesRegex(sb.StoreError, 'duplicate build state repository'):
+                run_plan(sliced_argv(plan_argv([same], root / 'p.json'), [chosen], selections.values()))
+            self.assertFalse((root / 'p.json').exists())
+
+    def test_hash_tampering_and_contradictions_refuse(self):
+        with workspace() as root:
+            record, states = slice_docs(THREE)
+            chosen, selections = write_sliced(root, record, states, 't')
+            argv = lambda sets, picked: sliced_argv(plan_argv([], root / 'p.json'), sets, picked)
+            with self.assertRaisesRegex(sb.StoreError, 'slice set: input checksum mismatch'):
+                run_plan(argv([[chosen[0], '0' * 64]], selections.values()))
+            bad = dict(selections, b=[selections['b'][0], '0' * 64])
+            with self.assertRaisesRegex(sb.StoreError, 'slice build state: input checksum mismatch'):
+                run_plan(argv([chosen], bad.values()))
+            # A rehashed edited state no longer matches the hash its slice set names.
+            states['b']['files'][0]['bytes'] = 1
+            edited = write(root, 'edited.json', states['b'])
+            with self.assertRaisesRegex(sb.StoreError, 'missing slice b'):
+                run_plan(argv([chosen], dict(selections, b=edited).values()))
+            for key, value in (('package_sha256', '0' * 64), ('built_head', C3),
+                               ('input_digest', '0' * 64), ('resolution_digest', '0' * 64)):
+                record, states = slice_docs(THREE)
+                record['slices'][0][key] = value
+                with self.assertRaisesRegex(sb.StoreError, 'slice state contradicts slice set: a'):
+                    sliced_plan(root, record, states, root / 'p.json', tag='c' + key)
+            record, states = slice_docs(THREE)
+            states['a']['path_index_sha256'] = '0' * 64
+            with self.assertRaisesRegex(sb.StoreError, 'slice path index differs from slice set union: a'):
+                sliced_plan(root, record, states, root / 'p.json', tag='pi')
+            record, states = slice_docs(THREE)
+            states['a']['tree'] = 'd' * 40
+            with self.assertRaisesRegex(sb.StoreError, 'slice tree differs from slice set: a'):
+                sliced_plan(root, record, states, root / 'p.json', tag='tr')
+            record, states = slice_docs(THREE)
+            states['a']['adapter_sha256'] = 'b' * 64
+            states['a']['input_digest'] = record['slices'][0]['input_digest'] = sb.slice_input_digest(states['a'])
+            with self.assertRaisesRegex(sb.StoreError, 'slice identities differ'):
+                sliced_plan(root, record, states, root / 'p.json', tag='id')
+            record, states = slice_docs(THREE)
+            states['a']['family'] = dict(name='graphify-stdlib-structural', version='1')
+            with self.assertRaisesRegex(sb.StoreError, 'unsupported slice build state'):
+                sliced_plan(root, record, states, root / 'p.json', tag='f')
+            record, states = slice_docs(THREE)
+            record['extra'] = 1
+            with self.assertRaisesRegex(sb.StoreError, 'slice set fields'):
+                sliced_plan(root, record, states, root / 'p.json', tag='e')
+            self.assertFalse((root / 'p.json').exists())
+
+    def test_slice_set_and_v1_state_repositories_plan_together_as_v2(self):
+        with workspace() as root:
+            record, states = slice_docs(THREE)
+            two = write(root, 'two.json', state('Org/two', C3, V1))
+            chosen, selections = write_sliced(root, record, states)
+            run_plan(sliced_argv(plan_argv([two], root / 'p.json'), [chosen], selections.values()))
+            plan = graph_pack.strict_json((root / 'p.json').read_bytes())
+        self.assertEqual(plan['schema'], sb.PLAN_SCHEMA_V2)
+        self.assertEqual([(s['repository'], s['kind']) for s in plan['inputs']['build_states']],
+                         [('Org/one', 'slice_set'), ('Org/two', 'state')])
+        self.assertEqual(plan['inputs']['build_states'][1], dict(repository='Org/two', kind='state',
+                                                                 sha256=two[1]))
+        self.assertEqual(plan['totals']['new'], 6)
+
+
+class SlicedVerifyTests(unittest.TestCase):
+    def setUp(self):
+        self._workspace = workspace()
+        self.root = self._workspace.__enter__()
+        self.addCleanup(self._workspace.__exit__, None, None, None)
+        record, states = slice_docs(THREE)
+        self.chosen, self.selections = write_sliced(self.root, record, states)
+        self.base = write(self.root, 'b.json', baseline([('Org/one', C1, V1)]))
+        result = run_plan(sliced_argv(plan_argv([], self.root / 'plan.json', base=self.base, ceiling=500),
+                                      [self.chosen], self.selections.values()))
+        self.plan = [result['plan']['path'], result['plan']['sha256']]
+        self.inputs = graph_pack.strict_json(Path(self.plan[0]).read_bytes())['inputs']['build_states']
+
+    def approval(self, name='approval.json', **change):
+        record = dict(schema=sb.APPROVAL_SCHEMA_V2, plan_sha256=self.plan[1], build_states=self.inputs,
+                      approved_by=OWNER, approval_source='synthetic fixture message ref',
+                      token_ceiling=300, approved_at='2026-10-21T12:30:00Z',
+                      expires_at='2026-10-21T18:00:00Z')
+        record.update(change)
+        return write(self.root, name, record)
+
+    def verify(self, approval=None, sets=None, picked=None, plan=None, now=NOW + timedelta(hours=1)):
+        argv = ['verify', '--baseline', *self.base, '--plan', *(plan or self.plan),
+                '--approval', *(approval or self.approval()), '--approver', OWNER]
+        argv = sliced_argv(argv, [self.chosen] if sets is None else sets,
+                           self.selections.values() if picked is None else picked)
+        return sb.verify(sb.parser().parse_args(argv), now=now)
+
+    def assertRefused(self, result, reason):
+        self.assertEqual(result['status'], 'refused')
+        self.assertTrue(any(reason in r for r in result['reasons']), result['reasons'])
+
+    def test_verified_v2_record_authorizes_nothing_and_writes_nothing(self):
+        approval = self.approval()
+        before = snapshot(self.root)
+        result = self.verify(approval)
+        self.assertEqual(result['status'], 'verified', result['reasons'])
+        self.assertEqual((result['authorizes'], result['executes']), ('nothing', 'nothing'))
+        self.assertEqual(result['estimated_total_tokens'], 208)
+        self.assertEqual(snapshot(self.root), before)
+
+    def test_v2_ceiling_order_estimate_approved_requested(self):
+        self.assertEqual(self.verify(self.approval(token_ceiling=208))['status'], 'verified')
+        self.assertEqual(self.verify(self.approval(token_ceiling=500))['status'], 'verified')
+        self.assertRefused(self.verify(self.approval(token_ceiling=207)), 'exceeds approved ceiling')
+        self.assertRefused(self.verify(self.approval(token_ceiling=501)), 'exceeds requested ceiling')
+
+    def test_approval_slice_binding_must_match_the_plan(self):
+        tampered = [dict(self.inputs[0], slices=[dict(s) for s in self.inputs[0]['slices']])]
+        tampered[0]['slices'][1]['sha256'] = '0' * 64
+        self.assertRefused(self.verify(self.approval(build_states=tampered)),
+                           'approval build states do not match')
+        fewer = [dict(self.inputs[0], slices=self.inputs[0]['slices'][:2])]
+        self.assertRefused(self.verify(self.approval(build_states=fewer)),
+                           'approval build states do not match')
+        moved = [dict(self.inputs[0], sha256='0' * 64)]
+        self.assertRefused(self.verify(self.approval(build_states=moved)),
+                           'approval build states do not match')
+        as_state = [dict(repository='Org/one', kind='state', sha256=self.inputs[0]['sha256'])]
+        self.assertRefused(self.verify(self.approval(build_states=as_state)),
+                           'approval build states do not match')
+        with self.assertRaisesRegex(sb.StoreError, 'approval build state fields'):
+            self.verify(self.approval(build_states=[dict(repository='Org/one', kind='slice_set',
+                                                         sha256=self.inputs[0]['sha256'])]))
+        with self.assertRaisesRegex(sb.StoreError, 'unsupported approval record'):
+            self.verify(self.approval(schema=sb.APPROVAL_SCHEMA))
+
+    def test_omitted_tampered_or_changed_slices_refuse_verify(self):
+        names = sorted(self.selections)
+        for omitted in names:
+            picked = [self.selections[n] for n in names if n != omitted]
+            with self.assertRaisesRegex(sb.StoreError, 'missing slice ' + omitted):
+                self.verify(picked=picked)
+        with self.assertRaisesRegex(sb.StoreError, 'input checksum mismatch'):
+            self.verify(sets=[[self.chosen[0], '0' * 64]])
+        with self.assertRaisesRegex(sb.StoreError, 'input checksum mismatch'):
+            self.verify(picked=[self.selections['a'], self.selections['b'],
+                                [self.selections['rest'][0], '0' * 64]])
+        with self.assertRaisesRegex(sb.StoreError, 'build state fields'):
+            argv = ['verify', '--build-state', *self.selections['a'], '--baseline', *self.base,
+                    '--plan', *self.plan, '--approval', *self.approval(), '--approver', OWNER]
+            sb.verify(sb.parser().parse_args(argv), now=NOW + timedelta(hours=1))
+        # A later consistent slice set with other bytes no longer reproduces the plan.
+        record, states = slice_docs(dict(THREE, rest={'d.py': V2['d.py'], 'e.py': b'e'}), head=C3)
+        later, picked = write_sliced(self.root, record, states, 'later')
+        self.assertRefused(self.verify(sets=[later], picked=picked.values()), 'stale plan')
+        # The unsliced equivalent reproduces the counts but not the v2 inputs: still stale.
+        unsliced = write(self.root, 'u.json', state('Org/one', C2, V2))
+        argv = ['verify', '--build-state', *unsliced, '--baseline', *self.base, '--plan', *self.plan,
+                '--approval', *self.approval(), '--approver', OWNER]
+        self.assertRefused(sb.verify(sb.parser().parse_args(argv), now=NOW + timedelta(hours=1)),
+                           'stale plan')
+
+    def test_tampered_v2_plan_is_refused_even_when_rehashed(self):
+        plan = graph_pack.strict_json(Path(self.plan[0]).read_bytes())
+        plan['inputs']['build_states'][0]['slices'] = plan['inputs']['build_states'][0]['slices'][:2]
+        forged = write(self.root, 'forged.json', plan)
+        approval = self.approval(plan_sha256=forged[1], build_states=plan['inputs']['build_states'])
+        self.assertRefused(self.verify(approval, plan=forged), 'stale plan')
+
+    def test_v1_plan_with_v2_approval_and_v1_inputs_stay_on_v1_rules(self):
+        current = write(self.root, 'v1.json', state('Org/one', C2, V2))
+        v1 = run_plan(plan_argv([current], self.root / 'v1-plan.json', base=self.base, ceiling=500))
+        v1_plan = [v1['plan']['path'], v1['plan']['sha256']]
+        self.assertEqual(graph_pack.strict_json(Path(v1_plan[0]).read_bytes())['schema'], sb.PLAN_SCHEMA)
+        base_argv = ['verify', '--build-state', *current, '--baseline', *self.base, '--plan', *v1_plan,
+                     '--approver', OWNER]
+        good = write(self.root, 'v1-approval.json', dict(
+            schema=sb.APPROVAL_SCHEMA, plan_sha256=v1_plan[1],
+            build_states=[dict(repository='Org/one', sha256=current[1])], approved_by=OWNER,
+            approval_source='synthetic fixture message ref', token_ceiling=300,
+            approved_at='2026-10-21T12:30:00Z', expires_at='2026-10-21T18:00:00Z'))
+        result = sb.verify(sb.parser().parse_args(base_argv + ['--approval', *good]),
+                           now=NOW + timedelta(hours=1))
+        self.assertEqual(result['status'], 'verified', result['reasons'])
+        wrong = write(self.root, 'v1-wrong.json', dict(
+            graph_pack.strict_json(Path(good[0]).read_bytes()), schema=sb.APPROVAL_SCHEMA_V2,
+            build_states=[dict(repository='Org/one', kind='state', sha256=current[1])]))
+        with self.assertRaisesRegex(sb.StoreError, 'unsupported approval record'):
+            sb.verify(sb.parser().parse_args(base_argv + ['--approval', *wrong]),
+                      now=NOW + timedelta(hours=1))
+        # v1 plans verified with slice-set inputs are stale, never upgraded.
+        argv = sliced_argv(['verify', '--baseline', *self.base, '--plan', *v1_plan, '--approval', *good,
+                            '--approver', OWNER], [self.chosen], self.selections.values())
+        self.assertRefused(sb.verify(sb.parser().parse_args(argv), now=NOW + timedelta(hours=1)),
+                           'stale plan')
+
+    def test_cli_exit_codes_for_sliced_refusals(self):
+        out = SimpleNamespace(buffer=io.BytesIO())
+        argv = sliced_argv(plan_argv([], self.root / 'cli.json'), [self.chosen],
+                           [self.selections['a'], self.selections['b']])
+        with patch.object(sys, 'stdout', out):
+            code = sb.main(argv)
+        result = graph_pack.strict_json(out.buffer.getvalue())
+        self.assertEqual((code, result['status']), (1, 'failed'))
+        self.assertIn('missing slice rest', result['reasons'][0])
+        self.assertFalse((self.root / 'cli.json').exists())
+
+
+class ProducerSliceSetTests(unittest.TestCase):
+    """Actual driver output over a synthetic mirror, with built and reused slice heads."""
+
+    def test_driver_slice_set_with_reused_slices_plans_and_omission_refuses(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import test_incremental_slices as fixtures
+        with fixtures.fixture() as fx, workspace() as root:
+            first = fx.build(fx.commit(fixtures.FILES))
+            self.assertEqual(first['status'], 'completed', first)
+            change = {'d/one.py': b'def one():\n    return 1\n'}
+            head = fx.commit(change)
+            second = fx.build(head, previous=first['slice_run'])
+            self.assertEqual(second['status'], 'completed', second)
+            chosen = [second['slice_set']['path'], second['slice_set']['sha256']]
+            run = fixtures.load(second['slice_run'])
+            picked = {s['name']: [s['build_state']['path'], s['build_state']['sha256']]
+                      for s in run['slices']}
+            self.assertEqual({s['status'] for s in run['slices']}, {'built', 'reused'})
+            self.assertTrue(any(s['built_head'] != head for s in run['slices']))
+            result = run_plan(sliced_argv(plan_argv([], root / 'p.json', ceiling=10**6), [chosen],
+                                          picked.values()))
+            plan = graph_pack.strict_json((root / 'p.json').read_bytes())
+            self.assertEqual(result['status'], 'planned')
+            repo = plan['repositories'][0]
+            self.assertEqual(repo['revision_range']['to'], head)
+            self.assertEqual(repo['revision_range']['tree'], second['tree'])
+            self.assertEqual(repo['counts']['new'], len(fixtures.FILES))
+            self.assertEqual(repo['input_bytes'], sum(len(b) for b in dict(fixtures.FILES, **change).values()))
+            self.assertEqual([s['name'] for s in plan['inputs']['build_states'][0]['slices']],
+                             sorted(picked))
+            for name in sorted(picked):
+                rest = [v for n, v in picked.items() if n != name]
+                with self.assertRaisesRegex(sb.StoreError, 'missing slice ' + name.replace('.', r'\.')):
+                    run_plan(sliced_argv(plan_argv([], root / 'q.json', ceiling=10**6), [chosen], rest))
+            self.assertFalse((root / 'q.json').exists())
 
 
 if __name__ == '__main__':

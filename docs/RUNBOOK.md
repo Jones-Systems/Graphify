@@ -761,3 +761,72 @@ rejects reused fragments, the slice falls back once to uncached extraction. A
 second refusal fails as `adapter_rejected`. The adapter alone writes `source.slice` in graph and
 validation output. The driver refuses output without it and never rewrites
 adapter output. None of this promotes, catalogs, or establishes freshness.
+
+## Semantic Planning For Sliced Repositories
+
+`tooling/semantic_batch.py` also plans sliced repositories. For each repository,
+name exactly one of two inputs. The first is one unsliced
+`graphify-build-state/v1` (`--build-state`), which follows the path above
+unchanged. The second is one `slice-set.json` (`graphify-slice-set/v1`,
+`--slice-set`) plus every `graphify-build-state/v2` slice state it names, each
+given as `--slice-state` with the path and SHA256 from `slice-run.json`:
+
+```bash
+python3 -I -B /RELEASE/tooling/semantic_batch.py plan \
+  --slice-set /STATE_ROOT/RUN/slice-set.json SLICE_SET_SHA256 \
+  --slice-state /STATE_ROOT/RUN/slices/a/build-state.json A_STATE_SHA256 \
+  --slice-state /STATE_ROOT/PRIOR_RUN/slices/b/build-state.json B_STATE_SHA256 \
+  --baseline /SEMANTIC_ROOT/baseline.json BASELINE_SHA256 \
+  --model-id MODEL_ID --max-output-tokens-per-file 800 \
+  --input-overhead-percent 120 --requested-ceiling 2000000 \
+  --valid-hours 24 --output /SEMANTIC_ROOT/plans/PLAN_NAME.json
+```
+
+The planner refuses any of the following, and writes nothing:
+
+- A slice the set names but no state supplies (`missing slice NAME`).
+- A slice state the set does not name. This includes a slice state given
+  without its slice set.
+- A slice state given twice, or a slice set with a duplicated or unsorted
+  slice.
+- A slice state given as `--build-state`. A slice state is never a whole
+  repository.
+- A path admitted by more than one slice.
+- A slice state whose repository or slice name differs from its set entry.
+- A slice state whose head, package, `input_digest` or `resolution_digest`
+  differs from its set entry.
+- Slice states with different family, policy, adapter, executable, per-file or
+  runtime identities.
+- A slice set that names a repository already given another way.
+- A changed slice set or slice state. These fail the SHA256 check: an edited,
+  rehashed state no longer matches the hash its set names.
+
+The planner recomputes each slice's `input_digest` from its own state. It
+builds the accepted path index from the union of slice files. A slice built at
+`accepted_head` must match the set's `tree` and that index's SHA256, and its
+`resolution_digest` must reproduce against the index. A reused slice carries
+an earlier built head. It is accepted only when both digests reproduce in the
+same way; otherwise the plan refuses with `unproved slice head NAME`. Heads are
+never mixed silently. These checks test the producer's own records for
+consistency. They are not an independent attestation of the source, and the
+planner reads no Git.
+
+The merged repository is the union of slice files at the set's `accepted_head`
+and `tree`. Comparison and estimation are unchanged, so a sliced repository
+plans the same counts, paths and tokens as the equivalent unsliced state.
+
+A plan that names any slice set uses `graphify-semantic-batch-plan/v2`. Every
+`inputs.build_states` entry is then `{repository, kind, sha256}`, where `kind`
+is `state` or `slice_set`. A `slice_set` entry also has
+`slices: [{name, sha256}]`. Its approval is `graphify-semantic-approval/v2`,
+whose `build_states` must equal the plan's exactly. Verify with the same
+`--slice-set` and `--slice-state` arguments. Omitting a slice or changing any
+slice-state or slice-set hash fails or refuses verification. Plans that name
+only v1 states are still `graphify-semantic-batch-plan/v1`, with
+byte-identical output. They verify only with a v1 approval under the v1 rules.
+Semantic baselines remain v1, one per repository.
+
+The ceiling order, the approver check and the `approval_source` limitation are
+unchanged. Authenticity still rests on the coordinator's custody of the owner's
+message. A verified plan still authorizes and executes nothing. There is no
+executor, and every semantic batch needs its own owner approval.
