@@ -4,7 +4,12 @@
 A key is graphify-fragment-key/v1: schema, fragment_schema, family {name,
 version}, adapter_sha256, runtime_identity_sha256, per_file_policy_sha256,
 path, and content_sha256. key_sha256 is the SHA256 of its canonical compact
-sorted ASCII JSON. Commit identity is never part of a key.
+sorted ASCII JSON. Commit identity is never part of a key. fragment_schema is
+graphify-structural-fragment/v1 with any bounded family, or
+graphify-structural-fragment/v2 with exactly family graphify-stdlib-structural
+version 2. The entry size cap follows fragment_schema: 1 MiB for v1, and for
+v2 the adapter's 8 MiB fragment ceiling plus a 64 KiB key and envelope
+allowance. A v2 entry's fragment must also carry the key's fragment_schema.
 
 The caller creates the cache root as an owner-only 0700 directory reached
 without symlinks. Entries live at objects/<key[0:2]>/<key>.json as
@@ -34,12 +39,18 @@ from graph_read import StoreError, require, valid_hash
 
 KEY_SCHEMA = 'graphify-fragment-key/v1'
 FRAGMENT_SCHEMA = 'graphify-structural-fragment/v1'
+# Family 2 values duplicated from refresh_adapter_structural.py, not imported;
+# tests/test_fragment_cache_v2.py guards them against drift.
+FRAGMENT_SCHEMA_V2 = 'graphify-structural-fragment/v2'
+FAMILY_V2 = dict(name='graphify-stdlib-structural', version='2')
+MAX_FRAGMENT_BYTES_V2 = 8 * 1024**2
 ENTRY_SCHEMA = 'graphify-fragment-cache-entry/v1'
 KEY_FIELDS = ('schema', 'fragment_schema', 'family', 'adapter_sha256',
               'runtime_identity_sha256', 'per_file_policy_sha256', 'path',
               'content_sha256')
 ENTRY_FIELDS = ('schema', 'key_sha256', 'key', 'fragment_sha256', 'fragment')
 MAX_ENTRY = 1024**2
+MAX_ENTRY_V2 = MAX_FRAGMENT_BYTES_V2 + 64 * 1024
 MAX_SCAN_ENTRIES = 1000000
 SHARD = re.compile('[0-9a-f]{2}')
 DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
@@ -62,12 +73,14 @@ def validate_material(material):
     try:
         closed(material, KEY_FIELDS, 'fragment key')
         require(material['schema'] == KEY_SCHEMA, 'unsupported fragment key schema')
-        require(material['fragment_schema'] == FRAGMENT_SCHEMA,
+        require(material['fragment_schema'] in (FRAGMENT_SCHEMA, FRAGMENT_SCHEMA_V2),
                 'unsupported fragment schema')
         family = material['family']
         closed(family, ('name', 'version'), 'fragment family')
         bounded_text(family['name'], 'family name')
         bounded_text(family['version'], 'family version')
+        require(material['fragment_schema'] == FRAGMENT_SCHEMA or family == FAMILY_V2,
+                'unsupported fragment family')
         for name in ('adapter_sha256', 'runtime_identity_sha256',
                      'per_file_policy_sha256', 'content_sha256'):
             require(valid_hash(material[name]), f'invalid {name}')
@@ -80,6 +93,17 @@ def validate_material(material):
 def key(material):
     """Return key_sha256 for validated graphify-fragment-key/v1 material."""
     return sha256(canonical(validate_material(material)))
+
+
+def _max_entry(material):
+    return MAX_ENTRY_V2 if material['fragment_schema'] == FRAGMENT_SCHEMA_V2 else MAX_ENTRY
+
+
+def _matches(material, fragment):
+    return (isinstance(fragment, dict) and fragment.get('path') == material['path']
+            and fragment.get('content_sha256') == material['content_sha256']
+            and (material['fragment_schema'] == FRAGMENT_SCHEMA
+                 or fragment.get('schema') == material['fragment_schema']))
 
 
 def _owned_directory(fd, label):
@@ -110,9 +134,7 @@ def _open_root(root):
 def _entry(material, fragment):
     """Return (key_sha256, fragment_sha256, encoded entry bytes)."""
     key_sha = key(material)
-    require(isinstance(fragment, dict) and fragment.get('path') == material['path']
-            and fragment.get('content_sha256') == material['content_sha256'],
-            'fragment does not match its key')
+    require(_matches(material, fragment), 'fragment does not match its key')
     fragment_sha = sha256(canonical(fragment))
     data = canonical(dict(schema=ENTRY_SCHEMA, key_sha256=key_sha, key=material,
                           fragment_sha256=fragment_sha, fragment=fragment)) + b'\n'
@@ -235,15 +257,16 @@ class FragmentCache:
             if error.errno == errno.ELOOP:
                 return 'corrupt', None, 'entry is a symlink'
             return 'corrupt', None, f'unreadable entry: {error.strerror or error}'
+        limit = _max_entry(material)
         with os.fdopen(fd, 'rb') as handle:
             before = os.fstat(handle.fileno())
             if not stat.S_ISREG(before.st_mode):
                 return 'corrupt', None, 'entry is not a regular file'
-            if before.st_size > MAX_ENTRY:
+            if before.st_size > limit:
                 return 'corrupt', None, 'entry too large'
-            raw = handle.read(MAX_ENTRY + 1)
+            raw = handle.read(limit + 1)
             after = os.fstat(handle.fileno())
-        if len(raw) > MAX_ENTRY or (before.st_size, before.st_mtime_ns) != (
+        if len(raw) > limit or (before.st_size, before.st_mtime_ns) != (
                 after.st_size, after.st_mtime_ns):
             return 'corrupt', None, 'entry changed or grew during read'
         try:
@@ -258,9 +281,7 @@ class FragmentCache:
             require(isinstance(fragment, dict), 'invalid entry fragment')
             fragment_sha = sha256(canonical(fragment))
             require(entry['fragment_sha256'] == fragment_sha, 'entry fragment_sha256 mismatch')
-            require(fragment.get('path') == material['path']
-                    and fragment.get('content_sha256') == material['content_sha256'],
-                    'entry fragment does not match its key')
+            require(_matches(material, fragment), 'entry fragment does not match its key')
         except (StoreError, ValueError, RecursionError) as error:
             return 'corrupt', None, str(error) or 'invalid entry'
         return 'hit', fragment, fragment_sha
@@ -296,7 +317,7 @@ class FragmentCache:
             key_sha, fragment_sha, data = _entry(material, fragment)
         except (StoreError, TypeError, ValueError, RecursionError):
             return 'error'
-        if len(data) > MAX_ENTRY:
+        if len(data) > _max_entry(material):
             return 'error'
         final = f'{key_sha}.json'
         shard = None
